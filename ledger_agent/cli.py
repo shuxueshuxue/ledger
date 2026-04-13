@@ -363,6 +363,28 @@ def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
     )
 
 
+def cmd_attach(args: argparse.Namespace, *, cwd: Path) -> str:
+    name = args.name
+    validate_name(name)
+    home = args.home
+    root = repo_root(cwd)
+    home_git_init(home)
+    ensure_clean_home(home)
+    base = ledger_dir(home, name)
+    if not base.exists():
+        raise LedgerError(f"Ledger not found: {name}")
+    workspaces = load_json(workspaces_path(home), {})
+    current = workspaces.get(str(root))
+    if current == name:
+        return f"Attached ledger: {name}\nWorkspace: {root}\n"
+    if current is not None:
+        raise LedgerError(f"Workspace already bound to ledger: {current}")
+    workspaces[str(root)] = name
+    write_json(workspaces_path(home), workspaces)
+    commit_if_dirty(home, f"ledger: attach {name}")
+    return f"Attached ledger: {name}\nWorkspace: {root}\n"
+
+
 def current_ledger(args: argparse.Namespace, *, cwd: Path) -> tuple[str, Path]:
     name = find_bound_ledger(args.home, cwd)
     base = ledger_dir(args.home, name)
@@ -639,7 +661,14 @@ def capture_input(
         "url": capture_url,
     }[input_type]
     item = capture(base, raw, workspace_root)
-    item.update({"captured_at": now_iso(), "workspace_head": git_head(workspace_root), "sync_status": "pending"})
+    item.update(
+        {
+            "captured_at": now_iso(),
+            "workspace_root": str(workspace_root.resolve()),
+            "workspace_head": git_head(workspace_root),
+            "sync_status": "pending",
+        }
+    )
     if add_to_manifest:
         append_manifest(base, item)
     return item
@@ -670,6 +699,7 @@ def capture_bundle(base: Path, inputs: list[tuple[str, str]], workspace_root: Pa
         "items": items,
         "artifact": str(path.relative_to(base)),
         "captured_at": now_iso(),
+        "workspace_root": str(workspace_root.resolve()),
         "workspace_head": git_head(workspace_root),
         "sync_status": "pending",
     }
@@ -706,6 +736,7 @@ Stale warning: {stale_warning or 'none'}
 Input type: {item['type']}
 Raw input: {item['raw']}
 Artifact: {item['artifact']}
+Input workspace: {item.get('workspace_root', state['workspace_root'])}
 {bundle_lines}
 
 Required LedgerPatch keys:
@@ -951,8 +982,16 @@ def stale_warning(state: dict[str, Any]) -> str:
     return f"STALE: git HEAD changed {synced} -> {current}"
 
 
-def maybe_update_synced_head(state: dict[str, Any], input_type: str, raw: str) -> None:
-    current = git_head(Path(state["workspace_root"]))
+def maybe_update_synced_head(
+    state: dict[str, Any],
+    input_type: str,
+    raw: str,
+    workspace_root: str | None = None,
+) -> None:
+    primary_root = Path(state["workspace_root"]).resolve()
+    if workspace_root is not None and Path(workspace_root).resolve() != primary_root:
+        return
+    current = git_head(primary_root)
     if input_type == "commit" and raw == "HEAD":
         state["synced_head"] = current
     if input_type == "range" and raw.endswith("..HEAD"):
@@ -962,9 +1001,9 @@ def maybe_update_synced_head(state: dict[str, Any], input_type: str, raw: str) -
 def maybe_update_synced_head_for_item(state: dict[str, Any], item: dict[str, Any]) -> None:
     if item.get("type") == "bundle":
         for child in item.get("items", []):
-            maybe_update_synced_head(state, child["type"], child["raw"])
+            maybe_update_synced_head(state, child["type"], child["raw"], child.get("workspace_root"))
         return
-    maybe_update_synced_head(state, item["type"], item["raw"])
+    maybe_update_synced_head(state, item["type"], item["raw"], item.get("workspace_root"))
 
 
 def update_references(base: Path, patch: dict[str, Any]) -> None:
@@ -1135,7 +1174,7 @@ def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, inputs: list[tuple[s
     assert_not_busy(base, home=args.home)
     ensure_clean_home(args.home)
     state = load_json(base / "state.json", {})
-    workspace_root = Path(state["workspace_root"])
+    workspace_root = repo_root(cwd)
     item = capture_input(base, inputs[0][0], inputs[0][1], workspace_root) if len(inputs) == 1 else capture_bundle(base, inputs, workspace_root)
     run_id = artifact_id("run", f"{item['type']}-{item['id']}")
     create_run_record(base, run_id, item)
@@ -1263,9 +1302,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ),
     )
     parser.add_argument("--home", type=Path, default=DEFAULT_HOME, help="ledger storage directory")
-    subparsers = parser.add_subparsers(dest="command", metavar="{init,show,wait,ls}")
+    subparsers = parser.add_subparsers(dest="command", metavar="{init,attach,show,wait,ls}")
     init = subparsers.add_parser("init", help="create and bind a ledger to this git workspace")
     init.add_argument("name")
+    attach = subparsers.add_parser("attach", help="bind this git workspace to an existing ledger")
+    attach.add_argument("name")
     worker = subparsers.add_parser("__worker")
     worker.add_argument("name")
     worker.add_argument("run_id")
@@ -1314,6 +1355,8 @@ def main(argv: list[str] | None = None, *, cwd: Path | None = None) -> str:
     try:
         if args.command == "init":
             output = cmd_init(args, cwd=target_cwd)
+        elif args.command == "attach":
+            output = cmd_attach(args, cwd=target_cwd)
         elif args.command == "__worker":
             run_worker(args.home, args.name, args.run_id)
             output = ""
@@ -1326,7 +1369,7 @@ def main(argv: list[str] | None = None, *, cwd: Path | None = None) -> str:
         else:
             inputs = selected_inputs(args)
             if not inputs:
-                raise LedgerError("Expected init, show, ls, or at least one typed input flag")
+                raise LedgerError("Expected init, attach, show, wait, ls, or at least one typed input flag")
             output = cmd_typed_input(args, cwd=target_cwd, inputs=inputs)
     except LedgerError as exc:
         if argv is None:

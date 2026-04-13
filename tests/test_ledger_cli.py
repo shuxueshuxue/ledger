@@ -33,6 +33,11 @@ class LedgerCliTests(unittest.TestCase):
         git(repo, "commit", "-m", "initial")
         return repo
 
+    def make_worktree(self, repo: Path, root: Path, branch: str = "attached") -> Path:
+        worktree = root / f"repo-{branch}"
+        git(repo, "worktree", "add", "-b", branch, str(worktree))
+        return worktree
+
     def test_init_creates_git_backed_ledger_and_required_checkpoint(self):
         from ledger_agent import cli as ledger
 
@@ -114,6 +119,101 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn('ledger -m "gang help"', output)
             self.assertIn("ask this ledger directly", output)
             self.assertIn("design debate", output)
+
+    def test_attach_binds_existing_ledger_to_sibling_worktree_without_reinitializing(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            worktree = self.make_worktree(repo, root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+
+            with self.assertRaisesRegex(ledger.LedgerError, "No ledger bound"):
+                ledger.main(["--home", str(home), "show"], cwd=worktree)
+
+            output = ledger.main(["--home", str(home), "attach", "pr501"], cwd=worktree)
+
+            self.assertIn("Attached ledger: pr501", output)
+            self.assertIn(str(worktree.resolve()), output)
+            workspaces = json.loads((home / "workspaces.json").read_text())
+            self.assertEqual(workspaces[str(repo.resolve())], "pr501")
+            self.assertEqual(workspaces[str(worktree.resolve())], "pr501")
+            state = json.loads((home / "ledgers" / "pr501" / "state.json").read_text())
+            self.assertEqual(state["workspace_root"], str(repo.resolve()))
+            show = ledger.main(["--home", str(home), "show"], cwd=worktree)
+            self.assertIn("Ledger: pr501", show)
+            self.assertEqual(git(home, "status", "--porcelain"), "")
+
+    def test_attach_rejects_workspace_already_bound_to_another_ledger(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            other = root / "other"
+            shutil.copytree(repo, other, ignore=shutil.ignore_patterns(".git"))
+            git(other, "init")
+            git(other, "config", "user.email", "ledger@example.test")
+            git(other, "config", "user.name", "Ledger Test")
+            git(other, "add", ".")
+            git(other, "commit", "-m", "initial")
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            ledger.main(["--home", str(home), "init", "other-ledger"], cwd=other)
+
+            with self.assertRaisesRegex(ledger.LedgerError, "Workspace already bound"):
+                ledger.main(["--home", str(home), "attach", "pr501"], cwd=other)
+
+    def test_attached_worktree_typed_input_uses_invoking_workspace_and_preserves_primary_synced_head(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            worktree = self.make_worktree(repo, root)
+            (worktree / "from-attached.txt").write_text("attached worktree fact\n")
+            git(worktree, "add", "from-attached.txt")
+            git(worktree, "commit", "-m", "attached worktree commit")
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            ledger.main(["--home", str(home), "attach", "pr501"], cwd=worktree)
+            ledger_dir = home / "ledgers" / "pr501"
+            before_state = json.loads((ledger_dir / "state.json").read_text())
+            self.assertEqual(before_state["synced_head"], git(repo, "rev-parse", "HEAD"))
+
+            captured: dict[str, object] = {}
+            patch = {
+                "decision": "accepted",
+                "summary": "attached input accepted",
+                "ledger_updates": {},
+                "checkpoint_updates": [],
+                "references_add": [],
+                "notes_updates": [],
+            }
+
+            def fake_run_ledger_agent(_base, _state, item, _warning):
+                captured["item"] = item
+                return "thread-1", patch, "synced"
+
+            with (
+                mock.patch("ledger_agent.cli.run_ledger_agent", side_effect=fake_run_ledger_agent),
+                mock.patch.dict("os.environ", {"LEDGER_INLINE_WORKER": "1"}),
+            ):
+                ledger.main(["--home", str(home), "-c", "HEAD"], cwd=worktree)
+
+            item = captured["item"]
+            self.assertIsInstance(item, dict)
+            self.assertEqual(item["type"], "commit")
+            self.assertEqual(item["workspace_root"], str(worktree.resolve()))
+            self.assertEqual(item["workspace_head"], git(worktree, "rev-parse", "HEAD"))
+            artifact = (ledger_dir / item["artifact"]).read_text()
+            self.assertIn("attached worktree commit", artifact)
+            self.assertIn("from-attached.txt", artifact)
+            after_state = json.loads((ledger_dir / "state.json").read_text())
+            self.assertEqual(after_state["workspace_root"], str(repo.resolve()))
+            self.assertEqual(after_state["synced_head"], before_state["synced_head"])
 
     def test_direct_script_init_renders_agent_instructions(self):
         from ledger_agent import cli as ledger

@@ -118,6 +118,18 @@ Initialize a ledger for the current git workspace:
 ledger init <name>
 ```
 
+Bind another git worktree or clone to an existing ledger:
+
+```bash
+ledger attach <name>
+```
+
+`attach` does not create a second ledger. It records the current git repo root
+in Ledger's workspace map and keeps the ledger's original managed workspace as
+the primary workspace. Typed inputs from the attached worktree are captured
+against the invoking worktree so commit/file references are not resolved through
+the wrong checkout.
+
 After init, ask the ledger to explain itself:
 
 ```bash
