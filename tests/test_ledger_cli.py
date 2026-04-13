@@ -351,6 +351,45 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("Run: busy", output)
             self.assertIn("run-1", output)
 
+    def test_wait_rejoins_current_run_and_returns_reply(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            base = home / "ledgers" / "pr501"
+            run_dir = base / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(json.dumps({"status": "done"}))
+            (run_dir / "reply.md").write_text("finished\n")
+            (base / "runs" / "current.json").write_text(json.dumps({"run_id": "run-1"}))
+
+            output = ledger.main(["--home", str(home), "wait"], cwd=repo)
+
+            self.assertEqual(output, "finished\n\n")
+
+    def test_interrupted_wait_tells_user_how_to_resume(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            base = home / "ledgers" / "pr501"
+            run_dir = base / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(json.dumps({"status": "running"}))
+            (base / "runs" / "current.json").write_text(json.dumps({"run_id": "run-1"}))
+
+            with (
+                mock.patch("time.sleep", side_effect=KeyboardInterrupt),
+                self.assertRaisesRegex(ledger.LedgerError, "ledger .*wait"),
+            ):
+                ledger.wait_for_run(base, "run-1", home=home)
+
 
 if __name__ == "__main__":
     unittest.main()

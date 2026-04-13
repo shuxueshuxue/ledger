@@ -6,6 +6,8 @@ import argparse
 import json
 import os
 import re
+import shlex
+import signal
 import shutil
 import subprocess
 import sys
@@ -433,6 +435,27 @@ def clear_current_run(base: Path, run_id: str) -> None:
         path.unlink()
 
 
+def ledger_command(home: Path, command: str) -> str:
+    parts = ["ledger"]
+    if home.resolve() != DEFAULT_HOME.resolve():
+        parts.extend(["--home", str(home)])
+    parts.append(command)
+    return " ".join(shlex.quote(part) for part in parts)
+
+
+def interrupted_wait_message(home: Path, run_id: str) -> str:
+    return "\n".join(
+        [
+            "Ledger wait interrupted; the worker is still running in the background.",
+            f"Run: {run_id}",
+            "Check status:",
+            f"  {ledger_command(home, 'show')}",
+            "Continue waiting:",
+            f"  {ledger_command(home, 'wait')}",
+        ]
+    )
+
+
 def artifact_id(input_type: str, raw: str) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}-{input_type}-{safe_slug(raw)[:48]}"
@@ -831,16 +854,29 @@ def start_worker_process(home: Path, name: str, run_id: str) -> int:
     return process.pid
 
 
-def wait_for_run(base: Path, run_id: str) -> str:
+def wait_for_run(base: Path, run_id: str, *, home: Path) -> str:
+    def interrupt_wait(_signum: int, _frame: Any) -> None:
+        raise KeyboardInterrupt
+
+    previous_int = signal.getsignal(signal.SIGINT)
+    previous_term = signal.getsignal(signal.SIGTERM)
     state_path = run_record_dir(base, run_id) / "state.json"
-    while True:
-        state = load_json(state_path, {})
-        if state.get("status") == "done":
-            reply = run_record_dir(base, run_id) / "reply.md"
-            return reply.read_text() + "\n"
-        if state.get("status") == "failed":
-            raise LedgerError(f"Ledger sync failed: {state.get('error', 'unknown error')}")
-        time.sleep(0.5)
+    try:
+        signal.signal(signal.SIGINT, interrupt_wait)
+        signal.signal(signal.SIGTERM, interrupt_wait)
+        while True:
+            state = load_json(state_path, {})
+            if state.get("status") == "done":
+                reply = run_record_dir(base, run_id) / "reply.md"
+                return reply.read_text() + "\n"
+            if state.get("status") == "failed":
+                raise LedgerError(f"Ledger sync failed: {state.get('error', 'unknown error')}")
+            time.sleep(0.5)
+    except KeyboardInterrupt as exc:
+        raise LedgerError(interrupted_wait_message(home, run_id)) from exc
+    finally:
+        signal.signal(signal.SIGINT, previous_int)
+        signal.signal(signal.SIGTERM, previous_term)
 
 
 def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, input_type: str, raw: str) -> str:
@@ -858,7 +894,7 @@ def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, input_type: str, raw
         run_worker(args.home, name, run_id)
     else:
         start_worker_process(args.home, name, run_id)
-    return wait_for_run(base, run_id)
+    return wait_for_run(base, run_id, home=args.home)
 
 
 def summarize_checkpoints(model: dict[str, Any]) -> tuple[list[str], str]:
@@ -916,6 +952,23 @@ def cmd_show(args: argparse.Namespace, *, cwd: Path) -> str:
     return "\n".join(output) + "\n"
 
 
+def cmd_wait(args: argparse.Namespace, *, cwd: Path) -> str:
+    name = args.name
+    if name is None:
+        name, base = current_ledger(args, cwd=cwd)
+    else:
+        base = ledger_dir(args.home, name)
+        if not base.exists():
+            raise LedgerError(f"Ledger not found: {name}")
+    current = load_current_run(base)
+    if current is None:
+        raise LedgerError(f"No running ledger sync for: {name}")
+    run_id = current.get("run_id")
+    if not run_id:
+        raise LedgerError(f"Malformed current run record for: {name}")
+    return wait_for_run(base, run_id, home=args.home)
+
+
 def cmd_ls(args: argparse.Namespace, *, cwd: Path) -> str:
     home = args.home
     workspaces = load_json(workspaces_path(home), {})
@@ -957,6 +1010,8 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     show = subparsers.add_parser("show")
     show.add_argument("name", nargs="?")
     show.add_argument("--full", action="store_true")
+    wait = subparsers.add_parser("wait")
+    wait.add_argument("name", nargs="?")
     subparsers.add_parser("ls")
     for flag, dest in [
         ("-m", "message"),
@@ -1001,6 +1056,8 @@ def main(argv: list[str] | None = None, *, cwd: Path | None = None) -> str:
             output = ""
         elif args.command == "show":
             output = cmd_show(args, cwd=target_cwd)
+        elif args.command == "wait":
+            output = cmd_wait(args, cwd=target_cwd)
         elif args.command == "ls":
             output = cmd_ls(args, cwd=target_cwd)
         else:
