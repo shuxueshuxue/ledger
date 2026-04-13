@@ -13,7 +13,6 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
-from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -278,7 +277,7 @@ def render_all(base: Path, model: dict[str, Any]) -> None:
 
 def ledger_agents_md(_workspace_root: Path, local_agents: Path | None) -> str:
     local_agents_line = str(local_agents) if local_agents and local_agents.exists() else "(none)"
-    template = resources.files("ledger_agent").joinpath("agent_instructions/AGENTS.md").read_text()
+    template = (Path(__file__).resolve().parent / "agent_instructions" / "AGENTS.md").read_text()
     return template.replace("{{LOCAL_AGENTS_PATH}}", local_agents_line)
 
 

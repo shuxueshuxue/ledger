@@ -1,5 +1,6 @@
 import json
 import subprocess
+import sys
 import tempfile
 import unittest
 from pathlib import Path
@@ -73,6 +74,26 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("Source Template: ledger_agent/agent_instructions/AGENTS.md", agents)
             self.assertIn(f"Managed workspace local AGENTS: {(repo / 'AGENTS.md').resolve()}", agents)
             self.assertNotIn("{{", agents)
+
+    def test_direct_script_init_renders_agent_instructions(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+
+            result = subprocess.run(
+                [sys.executable, str(Path(ledger.__file__)), "--home", str(home), "init", "pr501"],
+                cwd=repo,
+                text=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+
+            self.assertEqual(result.returncode, 0, result.stderr)
+            agents = (home / "ledgers" / "pr501" / "AGENTS.md").read_text()
+            self.assertIn("Source Template: ledger_agent/agent_instructions/AGENTS.md", agents)
 
     def test_mixed_typed_inputs_are_captured_as_one_bundle_sync(self):
         from ledger_agent import cli as ledger
