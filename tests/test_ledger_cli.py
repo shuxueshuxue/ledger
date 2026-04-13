@@ -378,6 +378,29 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("spawn failed", state["error"])
             self.assertEqual(git(home, "status", "--porcelain"), "")
 
+    def test_inline_worker_failure_is_not_committed_twice(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+
+            def fail_inside_worker(worker_home, name, run_id):
+                ledger.fail_run_before_worker(worker_home, ledger.ledger_dir(worker_home, name), run_id, "handled inside worker")
+                raise ledger.LedgerError("inline failed")
+
+            with (
+                mock.patch("ledger_agent.cli.run_worker", side_effect=fail_inside_worker),
+                mock.patch.dict("os.environ", {"LEDGER_INLINE_WORKER": "1"}),
+            ):
+                with self.assertRaisesRegex(ledger.LedgerError, "inline failed"):
+                    ledger.main(["--home", str(home), "-m", "Goal: inline failure."], cwd=repo)
+
+            commits = git(home, "log", "--oneline", "--grep", "ledger: failed").splitlines()
+            self.assertEqual(len(commits), 1)
+
     def test_show_reports_busy_run(self):
         from ledger_agent import cli as ledger
 

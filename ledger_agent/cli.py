@@ -959,14 +959,14 @@ def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, input_type: str, raw
     run_id = artifact_id("run", f"{input_type}-{item['id']}")
     create_run_record(base, run_id, item)
     commit_if_dirty(args.home, f"ledger: start {name} {input_type}")
-    try:
-        if os.environ.get("LEDGER_INLINE_WORKER") == "1":
-            run_worker(args.home, name, run_id)
-        else:
+    if os.environ.get("LEDGER_INLINE_WORKER") == "1":
+        run_worker(args.home, name, run_id)
+    else:
+        try:
             start_worker_process(args.home, name, run_id)
-    except Exception as exc:
-        fail_run_before_worker(args.home, base, run_id, str(exc))
-        raise
+        except Exception as exc:
+            fail_run_before_worker(args.home, base, run_id, str(exc))
+            raise
     return wait_for_run(base, run_id, home=args.home)
 
 
