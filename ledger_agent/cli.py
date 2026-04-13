@@ -894,13 +894,17 @@ def start_worker_process(home: Path, name: str, run_id: str) -> int:
     stderr_path = ledger_dir(home, name) / "runs" / run_id / "worker.stderr"
     stdout = stdout_path.open("w")
     stderr = stderr_path.open("w")
-    process = subprocess.Popen(
-        cmd,
-        cwd=ledger_dir(home, name),
-        stdout=stdout,
-        stderr=stderr,
-        start_new_session=True,
-    )
+    try:
+        process = subprocess.Popen(
+            cmd,
+            cwd=ledger_dir(home, name),
+            stdout=stdout,
+            stderr=stderr,
+            start_new_session=True,
+        )
+    finally:
+        stdout.close()
+        stderr.close()
     update_run_state(ledger_dir(home, name), run_id, pid=process.pid)
     return process.pid
 

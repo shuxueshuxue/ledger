@@ -332,6 +332,31 @@ class LedgerCliTests(unittest.TestCase):
             state = json.loads((base / "state.json").read_text())
             self.assertEqual(state["thread_id"], "thread-1")
 
+    def test_start_worker_process_closes_parent_log_handles(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            name, base = ledger.current_ledger(ledger.parse_args(["--home", str(home), "show"]), cwd=repo)
+            item = ledger.capture_input(base, "message", "Goal: keep worker alive.", repo)
+            run_id = "run-test"
+            ledger.create_run_record(base, run_id, item)
+            captured = {}
+
+            def fake_popen(*_args, **kwargs):
+                captured["stdout"] = kwargs["stdout"]
+                captured["stderr"] = kwargs["stderr"]
+                return mock.Mock(pid=123)
+
+            with mock.patch("subprocess.Popen", fake_popen):
+                ledger.start_worker_process(home, name, run_id)
+
+            self.assertTrue(captured["stdout"].closed)
+            self.assertTrue(captured["stderr"].closed)
+
     def test_show_reports_busy_run(self):
         from ledger_agent import cli as ledger
 
