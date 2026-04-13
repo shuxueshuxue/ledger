@@ -711,6 +711,11 @@ Allowed ledger_updates keys:
 Do not invent *_add fields. The CLI rejects unknown fields.
 Use notes_updates for flexible know-how, journal-like notes, and triage content.
 
+Adhesion:
+- Always set ledger_updates.next_required_input to one or more concrete next Ledger touchpoints when useful.
+- Prefer soft steering over control. Suggest when the worker should come back to Ledger, but do not prescribe its full implementation rhythm.
+- Good touchpoints include: checkpoint state changed, new evidence exists, architecture/legacy blocker found, runtime secret fact changed, or the next slice needs closure review.
+
 decision must be exactly one of:
 - accepted
 - parked

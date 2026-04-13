@@ -88,6 +88,15 @@ the ledger agent protocol.
 
 `references.md` is a source index for repos, paths, URLs, commits, and PRs.
 
+Ledger Agent is a judge, not a worker. It should question, accept, reject,
+park, record, and steer; it must not implement managed-workspace code itself.
+Worker reports stay flexible free text. The strict schema is Ledger Agent's
+output, not the worker's input.
+
+Ledger uses soft adhesion: replies should give a short next Ledger touchpoint
+through `next_required_input` when useful, without controlling the worker's full
+implementation rhythm.
+
 ## Commands
 
 Initialize a ledger for the current git workspace:
@@ -168,3 +177,9 @@ needed before closure. The important levels are:
 - `playwright-cli-yatu`: real frontend proof through Playwright CLI.
 - `play-as-test`: highest tier; realistic trial-use that plays the product like
   a user instead of following a rigid script.
+
+Code implementation checkpoints also need closure review for real LLM API usage
+when model behavior is in scope, no fallback growth, no patch-stack development,
+architecture blockers promoted to prerequisite checkpoints, redundant test
+scaffolding removed or consolidated, and legacy/database mismatches handled as
+their own prerequisite checkpoints instead of being accommodated silently.

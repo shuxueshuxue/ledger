@@ -81,6 +81,10 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("## Directory Structure", agents)
             self.assertIn("notes/", agents)
             self.assertIn("checkpoints/", agents)
+            self.assertIn("Ledger Agent is a judge, not a worker", agents)
+            self.assertIn("Checkpoint Closure Checklist", agents)
+            self.assertIn("real LLM API", agents)
+            self.assertIn("Do not increase fallback count", agents)
             self.assertNotIn("Inbox: ./inbox.md", agents)
             self.assertNotIn("{{", agents)
 
@@ -271,6 +275,8 @@ class LedgerCliTests(unittest.TestCase):
             command = run_cmd.call_args.args[0]
             self.assertEqual(command[:3], ["codex", "exec", "--json"])
             self.assertNotIn("codex-run", " ".join(command))
+            self.assertIn("Adhesion", command[-1])
+            self.assertIn("next_required_input", command[-1])
 
     def test_embedded_codex_runner_reads_current_item_completed_agent_message_events(self):
         from ledger_agent import cli as ledger
