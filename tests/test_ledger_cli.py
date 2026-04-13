@@ -357,6 +357,27 @@ class LedgerCliTests(unittest.TestCase):
             self.assertTrue(captured["stdout"].closed)
             self.assertTrue(captured["stderr"].closed)
 
+    def test_typed_input_marks_run_failed_when_worker_start_fails(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            base = home / "ledgers" / "pr501"
+
+            with mock.patch("ledger_agent.cli.start_worker_process", side_effect=ledger.LedgerError("spawn failed")):
+                with self.assertRaisesRegex(ledger.LedgerError, "spawn failed"):
+                    ledger.main(["--home", str(home), "-m", "Goal: start failure."], cwd=repo)
+
+            self.assertFalse((base / "runs" / "current.json").exists())
+            last = json.loads((base / "runs" / "last.json").read_text())
+            state = json.loads((base / "runs" / last["run_id"] / "state.json").read_text())
+            self.assertEqual(state["status"], "failed")
+            self.assertIn("spawn failed", state["error"])
+            self.assertEqual(git(home, "status", "--porcelain"), "")
+
     def test_show_reports_busy_run(self):
         from ledger_agent import cli as ledger
 

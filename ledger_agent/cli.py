@@ -484,6 +484,13 @@ def fail_dead_running_worker(home: Path, base: Path, run_id: str, state: dict[st
     commit_if_dirty(home, f"ledger: failed {run_id}")
 
 
+def fail_run_before_worker(home: Path, base: Path, run_id: str, error: str) -> None:
+    update_run_state(base, run_id, status="failed", finished_at=now_iso(), error=error)
+    clear_current_run(base, run_id)
+    mark_last_run(base, run_id)
+    commit_if_dirty(home, f"ledger: failed {run_id}")
+
+
 def ledger_command(home: Path, command: str) -> str:
     parts = ["ledger"]
     if home.resolve() != DEFAULT_HOME.resolve():
@@ -952,10 +959,14 @@ def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, input_type: str, raw
     run_id = artifact_id("run", f"{input_type}-{item['id']}")
     create_run_record(base, run_id, item)
     commit_if_dirty(args.home, f"ledger: start {name} {input_type}")
-    if os.environ.get("LEDGER_INLINE_WORKER") == "1":
-        run_worker(args.home, name, run_id)
-    else:
-        start_worker_process(args.home, name, run_id)
+    try:
+        if os.environ.get("LEDGER_INLINE_WORKER") == "1":
+            run_worker(args.home, name, run_id)
+        else:
+            start_worker_process(args.home, name, run_id)
+    except Exception as exc:
+        fail_run_before_worker(args.home, base, run_id, str(exc))
+        raise
     return wait_for_run(base, run_id, home=args.home)
 
 
