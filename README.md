@@ -57,6 +57,19 @@ The ledger home is a git repo. A write operation refuses to start if the ledger
 repo is already dirty. Successful CLI changes auto-commit only when files
 changed.
 
+## Ledger Agent Instructions
+
+Ledger agent behavior lives in source at:
+
+```text
+ledger_agent/agent_instructions/AGENTS.md
+```
+
+`ledger init <name>` renders that template into the runtime ledger
+`AGENTS.md`, injecting the managed workspace's local `AGENTS.md` path. The
+global Codex `AGENTS.md` is not copied or symlinked; it is already active in
+the runtime.
+
 ## Commands
 
 Initialize a ledger for the current git workspace:
@@ -65,7 +78,7 @@ Initialize a ledger for the current git workspace:
 ledger init <name>
 ```
 
-Sync exactly one typed input:
+Sync one or more typed inputs:
 
 ```bash
 ledger -m "message"
@@ -75,6 +88,13 @@ ledger -c <commit>
 ledger -r <commit-range>
 ledger -p <pr-number-or-url>
 ledger -u <url>
+```
+
+Multiple typed flags in one invocation are captured as a single bundle and
+produce one ledger-agent sync:
+
+```bash
+ledger -m "runtime fact" -f path/to/checkpoint.md -c HEAD
 ```
 
 Read status without starting the agent:

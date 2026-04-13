@@ -59,6 +59,78 @@ class LedgerCliTests(unittest.TestCase):
             self.assertEqual(checkpoint["state"], "draft")
             self.assertEqual(checkpoint["quality"], "draft")
 
+    def test_init_renders_agents_from_packaged_ledger_agent_instructions(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+
+            agents = (home / "ledgers" / "pr501" / "AGENTS.md").read_text()
+            self.assertIn("Source Template: ledger_agent/agent_instructions/AGENTS.md", agents)
+            self.assertIn(f"Managed workspace local AGENTS: {(repo / 'AGENTS.md').resolve()}", agents)
+            self.assertNotIn("{{", agents)
+
+    def test_mixed_typed_inputs_are_captured_as_one_bundle_sync(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            note = repo / "checkpoint.md"
+            note.write_text("# Checkpoint\n\nRuntime fact.\n")
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+
+            captured: dict[str, object] = {}
+            patch = {
+                "decision": "accepted",
+                "summary": "Bundle accepted.",
+                "ledger_updates": {"current": "Bundle processed."},
+                "checkpoint_updates": [],
+                "references_add": [],
+                "inbox_add": [],
+            }
+
+            def fake_run_ledger_agent(_base, _state, item, _warning):
+                captured["item"] = item
+                return "thread-1", patch, "synced"
+
+            with (
+                mock.patch("ledger_agent.cli.run_ledger_agent", side_effect=fake_run_ledger_agent),
+                mock.patch.dict("os.environ", {"LEDGER_INLINE_WORKER": "1"}),
+            ):
+                ledger.main(
+                    [
+                        "--home",
+                        str(home),
+                        "-m",
+                        "Import runtime fact.",
+                        "-f",
+                        str(note),
+                    ],
+                    cwd=repo,
+                )
+
+            item = captured["item"]
+            self.assertIsInstance(item, dict)
+            self.assertEqual(item["type"], "bundle")
+            self.assertEqual([child["type"] for child in item["items"]], ["message", "file"])
+            bundle_text = (home / "ledgers" / "pr501" / item["artifact"]).read_text()
+            self.assertIn("Import runtime fact.", bundle_text)
+            self.assertIn("checkpoint.md", bundle_text)
+            self.assertIn("message", bundle_text)
+            self.assertIn("file", bundle_text)
+            manifest_lines = (home / "ledgers" / "pr501" / "stash" / "manifest.jsonl").read_text().splitlines()
+            manifest_items = [json.loads(line) for line in manifest_lines]
+            self.assertEqual([manifest_item["type"] for manifest_item in manifest_items], ["bundle"])
+
+            log = git(home, "log", "--oneline", "-1")
+            self.assertIn("ledger: sync pr501 bundle", log)
+
     def test_message_input_captures_artifact_applies_agent_patch_and_commits(self):
         from ledger_agent import cli as ledger
 

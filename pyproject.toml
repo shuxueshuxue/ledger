@@ -15,6 +15,10 @@ ledger = "ledger_agent.cli:main"
 
 [tool.setuptools]
 packages = ["ledger_agent"]
+include-package-data = true
 
 [tool.setuptools.package-dir]
 "" = "."
+
+[tool.setuptools.package-data]
+ledger_agent = ["agent_instructions/*.md"]

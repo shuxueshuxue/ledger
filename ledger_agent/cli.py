@@ -13,6 +13,7 @@ import subprocess
 import sys
 import time
 from datetime import datetime, timezone
+from importlib import resources
 from pathlib import Path
 from typing import Any
 
@@ -275,46 +276,10 @@ def render_all(base: Path, model: dict[str, Any]) -> None:
     render_checkpoint_files(base, model)
 
 
-def ledger_agents_md(workspace_root: Path, local_agents: Path | None) -> str:
+def ledger_agents_md(_workspace_root: Path, local_agents: Path | None) -> str:
     local_agents_line = str(local_agents) if local_agents and local_agents.exists() else "(none)"
-    return f"""# Ledger Agent Rules
-
-You are the strict ledger agent for this long-horizon task.
-Loose input is allowed. Formal ledger state is strict.
-
-## Required Reading
-
-Before judging this ledger, read:
-
-- Managed workspace local AGENTS: {local_agents_line}
-- Ledger state: ./state.json
-- Current task ledger: ./ledger.md
-- Structured ledger model: ./ledger.json
-- Checkpoint index: ./checkpoints/index.json
-- Checkpoint folders: ./checkpoints/*/
-- References: ./references.md
-- Inbox: ./inbox.md
-
-The global AGENTS.md is already active in the runtime. Do not copy or symlink it here.
-
-## Patch Protocol
-
-Do not edit files directly. Return a LedgerPatch JSON block. The CLI validates and applies it.
-
-## Checkpoint Rules
-
-Checkpoint states are: draft, ready, in_progress, blocked, done, dropped.
-Only the ledger agent may decide checkpoint transitions.
-Every transition needs from, to, reason, and source.
-Do not mark done without source or evidence.
-
-## Ledger Quality
-
-No source means Inbox, not Accepted Facts.
-No evidence means not done.
-No scope or stopline means implementation checkpoints cannot become ready.
-Prefer one concrete next required input over broad advice.
-"""
+    template = resources.files("ledger_agent").joinpath("agent_instructions/AGENTS.md").read_text()
+    return template.replace("{{LOCAL_AGENTS_PATH}}", local_agents_line)
 
 
 def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
@@ -607,7 +572,14 @@ def capture_url(base: Path, raw: str, workspace_root: Path) -> dict[str, Any]:
     return {"id": item_id, "type": "url", "raw": raw, "artifact": str(path.relative_to(base))}
 
 
-def capture_input(base: Path, input_type: str, raw: str, workspace_root: Path) -> dict[str, Any]:
+def capture_input(
+    base: Path,
+    input_type: str,
+    raw: str,
+    workspace_root: Path,
+    *,
+    add_to_manifest: bool = True,
+) -> dict[str, Any]:
     capture = {
         "message": capture_message,
         "file": capture_file,
@@ -619,8 +591,41 @@ def capture_input(base: Path, input_type: str, raw: str, workspace_root: Path) -
     }[input_type]
     item = capture(base, raw, workspace_root)
     item.update({"captured_at": now_iso(), "workspace_head": git_head(workspace_root), "sync_status": "pending"})
-    append_manifest(base, item)
+    if add_to_manifest:
+        append_manifest(base, item)
     return item
+
+
+def capture_bundle(base: Path, inputs: list[tuple[str, str]], workspace_root: Path) -> dict[str, Any]:
+    items = [capture_input(base, input_type, raw, workspace_root, add_to_manifest=False) for input_type, raw in inputs]
+    item_id = artifact_id("bundle", f"{len(items)}-items")
+    path = base / "stash" / f"{item_id}.md"
+    lines = ["# Bundle", ""]
+    for index, item in enumerate(items, 1):
+        lines.extend(
+            [
+                f"## {index}. {item['type']}",
+                "",
+                f"- Raw: {item['raw']}",
+                f"- Artifact: {item['artifact']}",
+            ]
+        )
+        if item.get("source"):
+            lines.append(f"- Source: {item['source']}")
+        lines.append("")
+    path.write_text("\n".join(lines))
+    bundle = {
+        "id": item_id,
+        "type": "bundle",
+        "raw": f"{len(items)} typed inputs",
+        "items": items,
+        "artifact": str(path.relative_to(base)),
+        "captured_at": now_iso(),
+        "workspace_head": git_head(workspace_root),
+        "sync_status": "pending",
+    }
+    append_manifest(base, bundle)
+    return bundle
 
 
 def parse_ledger_patch(text: str) -> dict[str, Any]:
@@ -634,6 +639,11 @@ def parse_ledger_patch(text: str) -> dict[str, Any]:
 
 
 def run_ledger_agent(base: Path, state: dict[str, Any], item: dict[str, Any], stale_warning: str) -> tuple[str, dict[str, Any], str]:
+    bundle_lines = ""
+    if item.get("type") == "bundle":
+        bundle_lines = "\nBundle items:\n" + "\n".join(
+            f"- {child['type']}: {child['raw']} ({child['artifact']})" for child in item.get("items", [])
+        )
     prompt = f"""# Ledger Sync Input
 
 Read ./AGENTS.md first.
@@ -647,6 +657,7 @@ Stale warning: {stale_warning or 'none'}
 Input type: {item['type']}
 Raw input: {item['raw']}
 Artifact: {item['artifact']}
+{bundle_lines}
 
 Required LedgerPatch keys:
 - decision
@@ -817,6 +828,14 @@ def maybe_update_synced_head(state: dict[str, Any], input_type: str, raw: str) -
         state["synced_head"] = current
 
 
+def maybe_update_synced_head_for_item(state: dict[str, Any], item: dict[str, Any]) -> None:
+    if item.get("type") == "bundle":
+        for child in item.get("items", []):
+            maybe_update_synced_head(state, child["type"], child["raw"])
+        return
+    maybe_update_synced_head(state, item["type"], item["raw"])
+
+
 def update_references(base: Path, patch: dict[str, Any]) -> None:
     additions = patch.get("references_add", [])
     if not additions:
@@ -854,7 +873,7 @@ def process_run(home: Path, name: str, run_id: str) -> str:
     state["last_input_at"] = now_iso()
     state["last_sync_at"] = state["last_input_at"]
     state["updated_at"] = state["last_input_at"]
-    maybe_update_synced_head(state, item["type"], item["raw"])
+    maybe_update_synced_head_for_item(state, item)
     write_json(base / "state.json", state)
     log_path = base / "logs" / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{item['type']}.md"
     log_path.write_text(f"# Ledger Sync\n\nArtifact: {item['artifact']}\n\n## Reply\n\n{answer}\n")
@@ -948,17 +967,17 @@ def wait_for_run(base: Path, run_id: str, *, home: Path) -> str:
         signal.signal(signal.SIGTERM, previous_term)
 
 
-def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, input_type: str, raw: str) -> str:
+def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, inputs: list[tuple[str, str]]) -> str:
     home_git_init(args.home)
     name, base = current_ledger(args, cwd=cwd)
     assert_not_busy(base)
     ensure_clean_home(args.home)
     state = load_json(base / "state.json", {})
     workspace_root = Path(state["workspace_root"])
-    item = capture_input(base, input_type, raw, workspace_root)
-    run_id = artifact_id("run", f"{input_type}-{item['id']}")
+    item = capture_input(base, inputs[0][0], inputs[0][1], workspace_root) if len(inputs) == 1 else capture_bundle(base, inputs, workspace_root)
+    run_id = artifact_id("run", f"{item['type']}-{item['id']}")
     create_run_record(base, run_id, item)
-    commit_if_dirty(args.home, f"ledger: start {name} {input_type}")
+    commit_if_dirty(args.home, f"ledger: start {name} {item['type']}")
     if os.environ.get("LEDGER_INLINE_WORKER") == "1":
         run_worker(args.home, name, run_id)
     else:
@@ -1104,11 +1123,11 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
         ("-p", "pr", "sync a pull request number or URL"),
         ("-u", "url", "sync a URL reference"),
     ]:
-        parser.add_argument(flag, dest=dest, help=help_text)
+        parser.add_argument(flag, dest=dest, action="append", help=help_text)
     return parser.parse_args(argv)
 
 
-def selected_input(args: argparse.Namespace) -> tuple[str, str] | None:
+def selected_inputs(args: argparse.Namespace) -> list[tuple[str, str]]:
     values = [
         ("message", args.message),
         ("file", args.file),
@@ -1118,12 +1137,12 @@ def selected_input(args: argparse.Namespace) -> tuple[str, str] | None:
         ("pr", args.pr),
         ("url", args.url),
     ]
-    present = [(kind, value) for kind, value in values if value is not None]
-    if not present:
-        return None
-    if len(present) > 1:
-        raise LedgerError("Only one input type is allowed per invocation")
-    return present[0]
+    present: list[tuple[str, str]] = []
+    for kind, raw_values in values:
+        if raw_values is None:
+            continue
+        present.extend((kind, value) for value in raw_values)
+    return present
 
 
 def main(argv: list[str] | None = None, *, cwd: Path | None = None) -> str:
@@ -1143,10 +1162,10 @@ def main(argv: list[str] | None = None, *, cwd: Path | None = None) -> str:
         elif args.command == "ls":
             output = cmd_ls(args, cwd=target_cwd)
         else:
-            item = selected_input(args)
-            if item is None:
-                raise LedgerError("Expected init, show, ls, or one typed input flag")
-            output = cmd_typed_input(args, cwd=target_cwd, input_type=item[0], raw=item[1])
+            inputs = selected_inputs(args)
+            if not inputs:
+                raise LedgerError("Expected init, show, ls, or at least one typed input flag")
+            output = cmd_typed_input(args, cwd=target_cwd, inputs=inputs)
     except LedgerError as exc:
         if argv is None:
             print(str(exc), file=sys.stderr)
