@@ -84,6 +84,9 @@ prints the exact `ledger show` and `ledger wait` commands to use next. If the
 worker finishes before you run `ledger wait`, `ledger wait` returns the most
 recent finished run instead of losing the reply.
 
+If the detached worker dies before writing a terminal state, `ledger wait`
+marks that run as failed, clears the busy marker, and commits the failure state.
+
 ## Checkpoints
 
 Checkpoints are explicit state-machine records owned by the ledger agent. Normal

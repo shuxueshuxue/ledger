@@ -391,6 +391,29 @@ class LedgerCliTests(unittest.TestCase):
 
             self.assertEqual(output, "finished after interruption\n\n")
 
+    def test_wait_closes_dead_running_worker_as_failed(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            base = home / "ledgers" / "pr501"
+            run_dir = base / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(json.dumps({"status": "running", "pid": 999999}))
+            (base / "runs" / "current.json").write_text(json.dumps({"run_id": "run-1"}))
+
+            with self.assertRaisesRegex(ledger.LedgerError, "worker process exited"):
+                ledger.main(["--home", str(home), "wait"], cwd=repo)
+
+            state = json.loads((run_dir / "state.json").read_text())
+            self.assertEqual(state["status"], "failed")
+            self.assertFalse((base / "runs" / "current.json").exists())
+            self.assertEqual(json.loads((base / "runs" / "last.json").read_text())["run_id"], "run-1")
+            self.assertEqual(git(home, "status", "--porcelain"), "")
+
     def test_interrupted_wait_tells_user_how_to_resume(self):
         from ledger_agent import cli as ledger
 

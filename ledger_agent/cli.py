@@ -468,6 +468,22 @@ def close_terminal_run_if_owner_dead(home: Path, base: Path, run_id: str, state:
     commit_if_dirty(home, f"ledger: close run {run_id}")
 
 
+def fail_dead_running_worker(home: Path, base: Path, run_id: str, state: dict[str, Any]) -> None:
+    pid = state.get("pid")
+    if not pid or pid_is_running(pid):
+        return
+    update_run_state(
+        base,
+        run_id,
+        status="failed",
+        finished_at=now_iso(),
+        error=f"worker process exited before updating run state: {pid}",
+    )
+    clear_current_run(base, run_id)
+    mark_last_run(base, run_id)
+    commit_if_dirty(home, f"ledger: failed {run_id}")
+
+
 def ledger_command(home: Path, command: str) -> str:
     parts = ["ledger"]
     if home.resolve() != DEFAULT_HOME.resolve():
@@ -908,6 +924,11 @@ def wait_for_run(base: Path, run_id: str, *, home: Path) -> str:
             if state.get("status") == "failed":
                 close_terminal_run_if_owner_dead(home, base, run_id, state)
                 raise LedgerError(f"Ledger sync failed: {state.get('error', 'unknown error')}")
+            if state.get("status") == "running":
+                fail_dead_running_worker(home, base, run_id, state)
+                state = load_json(state_path, {})
+                if state.get("status") == "failed":
+                    raise LedgerError(f"Ledger sync failed: {state.get('error', 'unknown error')}")
             time.sleep(0.5)
     except KeyboardInterrupt as exc:
         raise LedgerError(interrupted_wait_message(home, run_id)) from exc
