@@ -732,7 +732,13 @@ If no checkpoint state transition is needed, use an empty checkpoint_updates lis
 def validate_patch(patch: dict[str, Any], model: dict[str, Any]) -> None:
     if patch.get("decision") not in {"accepted", "parked", "rejected", "read_only"}:
         raise LedgerError(f"LedgerPatch decision is invalid: {patch.get('decision')!r}")
+    for key in ["checkpoint_updates", "references_add", "inbox_add"]:
+        if key in patch and not isinstance(patch[key], list):
+            raise LedgerError(f"LedgerPatch {key} must be a list")
     updates = patch.get("ledger_updates", {})
+    for key in ["next_required_input", "open_questions", "accepted_facts", "decisions", "evidence"]:
+        if key in updates and not isinstance(updates[key], list):
+            raise LedgerError(f"LedgerPatch ledger_updates.{key} must be a list")
     if "status" in updates and updates["status"] not in LEDGER_STATUSES:
         raise LedgerError(f"LedgerPatch status is invalid: {updates['status']!r}")
     if "quality" in updates and updates["quality"] not in QUALITIES:

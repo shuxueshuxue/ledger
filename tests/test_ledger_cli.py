@@ -305,6 +305,19 @@ class LedgerCliTests(unittest.TestCase):
 
         ledger.validate_patch(patch, model)
 
+    def test_patch_validation_rejects_scalar_list_fields(self):
+        from ledger_agent import cli as ledger
+
+        model = {"checkpoints": []}
+        patch = {
+            "decision": "accepted",
+            "ledger_updates": {"next_required_input": "Choose one narrow checkpoint lane."},
+            "checkpoint_updates": [],
+        }
+
+        with self.assertRaisesRegex(ledger.LedgerError, "next_required_input must be a list"):
+            ledger.validate_patch(patch, model)
+
     def test_done_checkpoint_clears_missing_and_list_updates_are_recorded(self):
         from ledger_agent import cli as ledger
 
