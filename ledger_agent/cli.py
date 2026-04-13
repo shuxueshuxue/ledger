@@ -999,30 +999,37 @@ def cmd_ls(args: argparse.Namespace, *, cwd: Path) -> str:
 
 
 def parse_args(argv: list[str]) -> argparse.Namespace:
-    parser = argparse.ArgumentParser(prog="ledger")
-    parser.add_argument("--home", type=Path, default=DEFAULT_HOME)
-    subparsers = parser.add_subparsers(dest="command")
-    init = subparsers.add_parser("init")
+    parser = argparse.ArgumentParser(
+        prog="ledger",
+        description=(
+            "Workspace-bound long-horizon task ledger. Typed inputs start a "
+            "detached ledger-agent sync while the foreground waits for convenience."
+        ),
+    )
+    parser.add_argument("--home", type=Path, default=DEFAULT_HOME, help="ledger storage directory")
+    subparsers = parser.add_subparsers(dest="command", metavar="{init,show,wait,ls}")
+    init = subparsers.add_parser("init", help="create and bind a ledger to this git workspace")
     init.add_argument("name")
     worker = subparsers.add_parser("__worker")
     worker.add_argument("name")
     worker.add_argument("run_id")
-    show = subparsers.add_parser("show")
+    subparsers._choices_actions = [action for action in subparsers._choices_actions if action.dest != "__worker"]
+    show = subparsers.add_parser("show", help="show a compact ledger summary")
     show.add_argument("name", nargs="?")
-    show.add_argument("--full", action="store_true")
-    wait = subparsers.add_parser("wait")
+    show.add_argument("--full", action="store_true", help="print the full rendered ledger")
+    wait = subparsers.add_parser("wait", help="continue waiting for the current background sync")
     wait.add_argument("name", nargs="?")
-    subparsers.add_parser("ls")
-    for flag, dest in [
-        ("-m", "message"),
-        ("-f", "file"),
-        ("-d", "dir"),
-        ("-c", "commit"),
-        ("-r", "range"),
-        ("-p", "pr"),
-        ("-u", "url"),
+    subparsers.add_parser("ls", help="list known ledgers")
+    for flag, dest, help_text in [
+        ("-m", "message", "sync a typed message"),
+        ("-f", "file", "sync a file reference"),
+        ("-d", "dir", "sync a directory reference"),
+        ("-c", "commit", "sync a commit reference"),
+        ("-r", "range", "sync a commit range reference"),
+        ("-p", "pr", "sync a pull request number or URL"),
+        ("-u", "url", "sync a URL reference"),
     ]:
-        parser.add_argument(flag, dest=dest)
+        parser.add_argument(flag, dest=dest, help=help_text)
     return parser.parse_args(argv)
 
 
