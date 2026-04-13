@@ -62,6 +62,8 @@ class LedgerCliTests(unittest.TestCase):
             checkpoint = json.loads((ledger_dir / "checkpoints" / "task-framing" / "metadata.json").read_text())
             self.assertEqual(checkpoint["state"], "draft")
             self.assertEqual(checkpoint["quality"], "draft")
+            self.assertIn("verification_required", checkpoint)
+            self.assertIn("Verification level", checkpoint["missing"])
 
     def test_init_renders_agents_from_packaged_ledger_agent_instructions(self):
         from ledger_agent import cli as ledger
@@ -531,6 +533,81 @@ class LedgerCliTests(unittest.TestCase):
         self.assertEqual(updated["accepted_facts"][0]["fact"], "Goal exists")
         self.assertEqual(updated["decisions"][0]["decision"], "Accept framing")
         self.assertEqual(updated["evidence"][0]["evidence"], "Message has goal")
+
+    def test_checkpoint_update_records_verification_required_and_checkpoint_evidence(self):
+        from ledger_agent import cli as ledger
+
+        model = {
+            "checkpoints": [
+                {
+                    "id": "runtime-proof",
+                    "title": "Runtime Proof",
+                    "state": "draft",
+                    "quality": "draft",
+                    "verification_required": [],
+                    "evidence": [],
+                    "missing": ["Verification level"],
+                    "history": [],
+                }
+            ]
+        }
+        patch = {
+            "decision": "accepted",
+            "ledger_updates": {},
+            "checkpoint_updates": [
+                {
+                    "id": "runtime-proof",
+                    "from": "draft",
+                    "to": "ready",
+                    "quality": "usable",
+                    "reason": "Verification bar is explicit.",
+                    "source": "stash/message.md",
+                    "verification_required": [
+                        "backend-api-yatu",
+                        "playwright-cli-yatu",
+                        "play-as-test",
+                    ],
+                    "evidence": [
+                        {
+                            "tier": "source/test-layer",
+                            "source": "tests/test_ledger_cli.py",
+                            "result": "checkpoint records verification requirements",
+                        }
+                    ],
+                    "missing": [],
+                }
+            ],
+        }
+
+        updated = ledger.apply_patch_to_model(model, patch, "stash/message.md")
+        checkpoint = updated["checkpoints"][0]
+
+        self.assertEqual(
+            checkpoint["verification_required"],
+            ["backend-api-yatu", "playwright-cli-yatu", "play-as-test"],
+        )
+        self.assertEqual(checkpoint["evidence"][0]["tier"], "source/test-layer")
+        self.assertEqual(checkpoint["missing"], [])
+
+    def test_patch_validation_rejects_scalar_checkpoint_verification_required(self):
+        from ledger_agent import cli as ledger
+
+        model = {"checkpoints": [{"id": "runtime-proof", "state": "draft"}]}
+        patch = {
+            "decision": "accepted",
+            "ledger_updates": {},
+            "checkpoint_updates": [
+                {
+                    "id": "runtime-proof",
+                    "from": "draft",
+                    "to": "ready",
+                    "verification_required": "play-as-test",
+                }
+            ],
+        }
+
+        with self.assertRaisesRegex(ledger.LedgerError, "verification_required must be a list"):
+            ledger.validate_patch(patch, model)
 
     def test_running_worker_blocks_new_typed_input(self):
         from ledger_agent import cli as ledger

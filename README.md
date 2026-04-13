@@ -159,3 +159,12 @@ Allowed quality labels:
 - `usable`
 - `strict`
 - `blocked`
+
+Each checkpoint carries `verification_required`, a list of evidence levels
+needed before closure. The important levels are:
+
+- `source/test-layer`: source review, unit tests, or narrow mechanism tests.
+- `backend-api-yatu`: real backend API proof using real runtime prerequisites.
+- `playwright-cli-yatu`: real frontend proof through Playwright CLI.
+- `play-as-test`: highest tier; realistic trial-use that plays the product like
+  a user instead of following a rigid script.

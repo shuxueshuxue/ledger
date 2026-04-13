@@ -47,6 +47,21 @@ Checkpoint states are: draft, ready, in_progress, blocked, done, dropped.
 Only the ledger agent may decide checkpoint transitions.
 Every transition needs from, to, reason, and source.
 Do not mark done without source or evidence.
+Every checkpoint must explicitly name the verification required to close it.
+
+Verification levels:
+
+- `source/test-layer`: source review, unit tests, or narrow mechanism tests. Useful as auxiliary evidence only.
+- `backend-api-yatu`: test as the user through real backend APIs, real storage, and real runtime prerequisites.
+- `playwright-cli-yatu`: test as the user through the real frontend using Playwright CLI only.
+- `play-as-test`: highest tier. Invent a realistic, flexible trial-use scenario and play the product like a user, not like a rigid script.
+
+Pressure testing means choosing the strongest required level for the checkpoint,
+then recording what was actually run and what it proves. If UI behavior is in
+scope, Playwright CLI YATU or Play-as-Test is required. If backend/runtime
+contract is in scope, backend API YATU is required. Play-as-Test may combine
+backend API and Playwright CLI probes, but its standard is product trial-use:
+complex, flexible, and capable of finding normal-use awkwardness.
 
 ## Ledger Quality
 

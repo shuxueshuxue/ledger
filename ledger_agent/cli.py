@@ -135,9 +135,11 @@ def initial_checkpoint(created_at: str) -> dict[str, Any]:
             "Scope is explicit.",
             "Stopline is explicit.",
             "Evidence bar is explicit.",
+            "Verification level is explicit.",
         ],
+        "verification_required": ["Define required verification level before closing this checkpoint."],
         "evidence": [],
-        "missing": ["Goal", "Scope", "Stopline", "Evidence bar"],
+        "missing": ["Goal", "Scope", "Stopline", "Evidence bar", "Verification level"],
         "history": [
             {
                 "at": created_at,
@@ -176,6 +178,10 @@ def render_checkpoint_md(checkpoint: dict[str, Any]) -> str:
         "## Acceptance",
     ]
     lines.extend(f"- {item}" for item in checkpoint.get("acceptance", []))
+    lines.append("")
+    lines.append("## Verification Required")
+    verification_required = checkpoint.get("verification_required", [])
+    lines.extend((f"- {item}" for item in verification_required) if verification_required else ["None."])
     lines.extend(["", "## Current", f"State: {checkpoint.get('state', 'draft')}", f"Quality: {checkpoint.get('quality', 'draft')}", ""])
     lines.append("## Missing")
     missing = checkpoint.get("missing", [])
@@ -228,6 +234,9 @@ def render_ledger_md(model: dict[str, Any]) -> str:
         )
         missing = checkpoint.get("missing") or []
         lines.extend((f"- {item}" for item in missing) if missing else ["- None"])
+        lines.extend(["", "Verification Required:"])
+        verification_required = checkpoint.get("verification_required") or []
+        lines.extend((f"- {item}" for item in verification_required) if verification_required else ["- None"])
     for section, key in [
         ("Accepted Facts", "accepted_facts"),
         ("Decisions", "decisions"),
@@ -819,6 +828,9 @@ def validate_patch(patch: dict[str, Any], model: dict[str, Any]) -> None:
         expected_from = update.get("from")
         if checkpoint and expected_from is not None and checkpoint.get("state") != expected_from:
             raise LedgerError(f"Checkpoint {update['id']} state mismatch")
+        for key in ["acceptance", "verification_required", "missing", "evidence"]:
+            if key in update and not isinstance(update[key], list):
+                raise LedgerError(f"LedgerPatch checkpoint_updates.{key} must be a list")
 
 
 def validate_note_relative_path(raw_path: str) -> None:
@@ -868,11 +880,21 @@ def apply_patch_to_model(model: dict[str, Any], patch: dict[str, Any], source: s
                 "order": order,
                 "goal": update.get("goal", ""),
                 "acceptance": update.get("acceptance", []),
+                "verification_required": update.get("verification_required", []),
                 "evidence": [],
                 "missing": [],
                 "history": [],
             }
             model["checkpoints"].append(checkpoint)
+        if "goal" in update:
+            checkpoint["goal"] = update["goal"]
+        if "acceptance" in update:
+            checkpoint["acceptance"] = update["acceptance"]
+        if "verification_required" in update:
+            checkpoint["verification_required"] = update["verification_required"]
+        if "evidence" in update:
+            checkpoint.setdefault("evidence", [])
+            checkpoint["evidence"].extend(update["evidence"])
         old_state = checkpoint.get("state")
         checkpoint["state"] = update["to"]
         checkpoint["quality"] = update.get("quality", checkpoint.get("quality", "draft"))
