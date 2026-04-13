@@ -92,6 +92,10 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("Pre-Checkpoint Debate", agents)
             self.assertIn("Ledger can be wrong", agents)
             self.assertIn("Engineering Taste", agents)
+            self.assertIn("## Busy And Reconnect Workflow", agents)
+            self.assertIn("ledger wait", agents)
+            self.assertIn("Several minutes is normal", agents)
+            self.assertIn("Do not start another typed input", agents)
             self.assertIn("anti-pattern", agents)
             self.assertNotIn("Inbox: ./inbox.md", agents)
             self.assertNotIn("{{", agents)
@@ -638,7 +642,7 @@ class LedgerCliTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "verification_required must be a list"):
             ledger.validate_patch(patch, model)
 
-    def test_running_worker_blocks_new_typed_input(self):
+    def test_running_worker_blocks_new_typed_input_with_resume_guidance(self):
         from ledger_agent import cli as ledger
 
         with tempfile.TemporaryDirectory() as tmp:
@@ -659,9 +663,25 @@ class LedgerCliTests(unittest.TestCase):
                 )
             )
             (ledger_dir / "runs" / "current.json").write_text(json.dumps({"run_id": "run-1"}))
+            manifest_path = ledger_dir / "stash" / "manifest.jsonl"
+            before_manifest = manifest_path.read_text() if manifest_path.exists() else None
+            before_current = (ledger_dir / "runs" / "current.json").read_text()
+            before_run_dirs = sorted(path.name for path in (ledger_dir / "runs").iterdir())
 
-            with self.assertRaisesRegex(ledger.LedgerError, "busy"):
+            with self.assertRaises(ledger.LedgerError) as raised:
                 ledger.main(["--home", str(home), "-m", "new input"], cwd=repo)
+            message = str(raised.exception)
+
+            self.assertIn("Ledger is busy with a running sync.", message)
+            self.assertIn("Run: run-1", message)
+            self.assertIn("Status: running", message)
+            self.assertIn(f"ledger --home {home.resolve()} show", message)
+            self.assertIn(f"ledger --home {home.resolve()} wait", message)
+            self.assertIn("Do not start another typed input", message)
+            after_manifest = manifest_path.read_text() if manifest_path.exists() else None
+            self.assertEqual(after_manifest, before_manifest)
+            self.assertEqual((ledger_dir / "runs" / "current.json").read_text(), before_current)
+            self.assertEqual(sorted(path.name for path in (ledger_dir / "runs").iterdir()), before_run_dirs)
 
     def test_worker_success_clears_current_run_and_applies_patch(self):
         from ledger_agent import cli as ledger

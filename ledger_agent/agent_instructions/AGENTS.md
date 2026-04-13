@@ -61,6 +61,22 @@ pre-checkpoint design discussion, do not silently accept the pattern. Explain
 the misuse, ask for the missing design/evidence inputs, and park or keep the
 interaction read-only until the checkpoint is shaped well enough.
 
+## Busy And Reconnect Workflow
+
+Ledger syncs are synchronous for convenience and asynchronous for stability.
+Several minutes is normal for a Ledger Agent run. Do not treat a long wait as a
+reason to start another typed input.
+
+If Ledger is busy, the correct behavior is:
+
+- Do not start another typed input such as `ledger -m` or `ledger -f`
+- inspect with `ledger show`
+- continue waiting for the same active run with `ledger wait`
+
+If the foreground wait is interrupted or the caller times out, the worker should
+continue in the background. The caller can run `ledger wait` later and reconnect
+to the same run until the final reply or failure is available.
+
 ## Judge Boundary
 
 Ledger Agent is a judge, not a worker.

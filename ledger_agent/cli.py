@@ -401,19 +401,30 @@ def load_last_run(base: Path) -> dict[str, Any] | None:
     return json.loads(path.read_text())
 
 
-def assert_not_busy(base: Path) -> None:
+def busy_run_message(home: Path, run_id: str, state: dict[str, Any]) -> str:
+    return "\n".join(
+        [
+            "Ledger is busy with a running sync.",
+            f"Run: {run_id}",
+            f"Status: {state.get('status', 'running')}",
+            "Several minutes is normal for a Ledger Agent run.",
+            "Do not start another typed input while this run is active.",
+            "Inspect status:",
+            f"  {ledger_command(home, 'show')}",
+            "Continue waiting for this same run:",
+            f"  {ledger_command(home, 'wait')}",
+        ]
+    )
+
+
+def assert_not_busy(base: Path, *, home: Path) -> None:
     current = load_current_run(base)
     if current is None:
         return
     run_id = current.get("run_id", "")
     state_path = run_record_dir(base, run_id) / "state.json"
     state = load_json(state_path, {})
-    raise LedgerError(
-        "Ledger is busy with a running sync.\n"
-        f"Run: {run_id}\n"
-        f"Status: {state.get('status', 'running')}\n"
-        "Wait for it to finish before starting another sync."
-    )
+    raise LedgerError(busy_run_message(home, run_id, state))
 
 
 def create_run_record(base: Path, run_id: str, item: dict[str, Any]) -> None:
@@ -1121,7 +1132,7 @@ def wait_for_run(base: Path, run_id: str, *, home: Path) -> str:
 def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, inputs: list[tuple[str, str]]) -> str:
     home_git_init(args.home)
     name, base = current_ledger(args, cwd=cwd)
-    assert_not_busy(base)
+    assert_not_busy(base, home=args.home)
     ensure_clean_home(args.home)
     state = load_json(base / "state.json", {})
     workspace_root = Path(state["workspace_root"])

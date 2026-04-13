@@ -176,6 +176,11 @@ prints the exact `ledger show` and `ledger wait` commands to use next. If the
 worker finishes before you run `ledger wait`, `ledger wait` returns the most
 recent finished run instead of losing the reply.
 
+Several minutes is normal for a Ledger Agent run. Do not start another typed
+input to "unstick" it. While the ledger is busy, new typed input is blocked
+before stash capture or worker start, and the error points back to `ledger show`
+and `ledger wait`.
+
 If the detached worker dies before writing a terminal state, `ledger wait`
 marks that run as failed, clears the busy marker, and commits the failure state.
 
