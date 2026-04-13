@@ -163,7 +163,6 @@ def initial_ledger_model(name: str, created_at: str) -> dict[str, Any]:
         "evidence": [],
         "open_questions": [],
         "next_required_input": [],
-        "inbox": [],
     }
 
 
@@ -235,7 +234,6 @@ def render_ledger_md(model: dict[str, Any]) -> str:
         ("Evidence", "evidence"),
         ("Open Questions", "open_questions"),
         ("Next Required Input", "next_required_input"),
-        ("Inbox", "inbox"),
     ]:
         lines.extend(["", f"## {section}"])
         values = model.get(key, [])
@@ -281,6 +279,28 @@ def ledger_agents_md(_workspace_root: Path, local_agents: Path | None) -> str:
     return template.replace("{{LOCAL_AGENTS_PATH}}", local_agents_line)
 
 
+def ensure_ledger_layout(base: Path, state: dict[str, Any]) -> None:
+    notes_dir = base / "notes"
+    notes_dir.mkdir(parents=True, exist_ok=True)
+    triage_path = notes_dir / "triage.md"
+    if not triage_path.exists():
+        triage_path.write_text("# Triage\n\n")
+
+    legacy_inbox = base / "inbox.md"
+    if legacy_inbox.exists():
+        legacy_text = legacy_inbox.read_text().strip()
+        if legacy_text:
+            with triage_path.open("a") as handle:
+                handle.write("\n## Migrated inbox.md\n\n")
+                handle.write(legacy_text + "\n")
+        legacy_inbox.unlink()
+
+    workspace_root = Path(state["workspace_root"])
+    local_agents_raw = state.get("local_agents_path")
+    local_agents = Path(local_agents_raw) if local_agents_raw else workspace_root / "AGENTS.md"
+    (base / "AGENTS.md").write_text(ledger_agents_md(workspace_root, local_agents))
+
+
 def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
     name = args.name
     validate_name(name)
@@ -299,8 +319,6 @@ def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
     (base / "stash").mkdir()
     (base / "logs").mkdir()
     (base / "references.md").write_text("# References\n\n")
-    (base / "inbox.md").write_text("# Inbox\n\n")
-    (base / "AGENTS.md").write_text(ledger_agents_md(root, root / "AGENTS.md"))
     state = {
         "name": name,
         "workspace_root": str(root),
@@ -315,6 +333,7 @@ def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
         "last_input_at": None,
         "last_sync_at": None,
     }
+    ensure_ledger_layout(base, state)
     write_json(base / "state.json", state)
     model = initial_ledger_model(name, created)
     render_all(base, model)
@@ -664,7 +683,10 @@ Required LedgerPatch keys:
 - ledger_updates
 - checkpoint_updates
 - references_add
-- inbox_add
+- notes_updates
+
+Deprecated compatibility key:
+- inbox_add writes to notes/triage.md
 
 Allowed ledger_updates keys:
 - goal
@@ -678,6 +700,7 @@ Allowed ledger_updates keys:
 - evidence
 
 Do not invent *_add fields. The CLI rejects unknown fields.
+Use notes_updates for flexible know-how, journal-like notes, and triage content.
 
 decision must be exactly one of:
 - accepted
@@ -742,15 +765,25 @@ If no checkpoint state transition is needed, use an empty checkpoint_updates lis
 
 
 def validate_patch(patch: dict[str, Any], model: dict[str, Any]) -> None:
-    allowed_patch_keys = {"decision", "summary", "ledger_updates", "checkpoint_updates", "references_add", "inbox_add"}
+    allowed_patch_keys = {
+        "decision",
+        "summary",
+        "ledger_updates",
+        "checkpoint_updates",
+        "references_add",
+        "notes_updates",
+        "inbox_add",
+    }
     for key in patch:
         if key not in allowed_patch_keys:
             raise LedgerError(f"LedgerPatch unknown field: {key}")
     if patch.get("decision") not in {"accepted", "parked", "rejected", "read_only"}:
         raise LedgerError(f"LedgerPatch decision is invalid: {patch.get('decision')!r}")
-    for key in ["checkpoint_updates", "references_add", "inbox_add"]:
+    for key in ["checkpoint_updates", "references_add", "notes_updates", "inbox_add"]:
         if key in patch and not isinstance(patch[key], list):
             raise LedgerError(f"LedgerPatch {key} must be a list")
+    for update in patch.get("notes_updates", []):
+        validate_note_update(update)
     updates = patch.get("ledger_updates", {})
     allowed_update_keys = {
         "goal",
@@ -786,6 +819,21 @@ def validate_patch(patch: dict[str, Any], model: dict[str, Any]) -> None:
         expected_from = update.get("from")
         if checkpoint and expected_from is not None and checkpoint.get("state") != expected_from:
             raise LedgerError(f"Checkpoint {update['id']} state mismatch")
+
+
+def validate_note_relative_path(raw_path: str) -> None:
+    relative = Path(raw_path)
+    if not raw_path or relative.is_absolute() or ".." in relative.parts:
+        raise LedgerError(f"Invalid notes path: {raw_path}")
+
+
+def validate_note_update(update: Any) -> None:
+    if not isinstance(update, dict):
+        raise LedgerError("notes_updates entries must be objects")
+    validate_note_relative_path(str(update.get("path", "")))
+    mode = update.get("mode", "append")
+    if mode not in {"append", "replace"}:
+        raise LedgerError(f"Invalid notes update mode: {mode}")
 
 
 def apply_patch_to_model(model: dict[str, Any], patch: dict[str, Any], source: str) -> dict[str, Any]:
@@ -842,8 +890,6 @@ def apply_patch_to_model(model: dict[str, Any], patch: dict[str, Any], source: s
                 "source": update.get("source", source),
             }
         )
-    for item in patch.get("inbox_add", []):
-        model.setdefault("inbox", []).append(item.get("text", str(item)) if isinstance(item, dict) else str(item))
     return model
 
 
@@ -885,14 +931,44 @@ def update_inbox(base: Path, patch: dict[str, Any]) -> None:
     additions = patch.get("inbox_add", [])
     if not additions:
         return
-    with (base / "inbox.md").open("a") as handle:
+    (base / "notes").mkdir(parents=True, exist_ok=True)
+    triage = base / "notes" / "triage.md"
+    if not triage.exists():
+        triage.write_text("# Triage\n\n")
+    with triage.open("a") as handle:
         for item in additions:
             handle.write(f"- {json.dumps(item, sort_keys=True)}\n")
+
+
+def resolve_note_path(base: Path, raw_path: str) -> Path:
+    validate_note_relative_path(raw_path)
+    return base / "notes" / Path(raw_path)
+
+
+def update_notes(base: Path, patch: dict[str, Any]) -> None:
+    updates = patch.get("notes_updates", [])
+    if not updates:
+        return
+    (base / "notes").mkdir(parents=True, exist_ok=True)
+    for update in updates:
+        path = resolve_note_path(base, str(update.get("path", "")))
+        mode = update.get("mode", "append")
+        content = str(update.get("content", ""))
+        if mode not in {"append", "replace"}:
+            raise LedgerError(f"Invalid notes update mode: {mode}")
+        path.parent.mkdir(parents=True, exist_ok=True)
+        if mode == "replace":
+            path.write_text(content.rstrip() + "\n")
+        else:
+            prefix = "" if not path.exists() or not path.read_text() else "\n"
+            with path.open("a") as handle:
+                handle.write(prefix + content.rstrip() + "\n")
 
 
 def process_run(home: Path, name: str, run_id: str) -> str:
     base = ledger_dir(home, name)
     state = load_json(base / "state.json", {})
+    ensure_ledger_layout(base, state)
     run_state = load_json(run_record_dir(base, run_id) / "state.json", {})
     item = load_json(run_record_dir(base, run_id) / "input.json", {})
     warning = stale_warning(state)
@@ -902,6 +978,7 @@ def process_run(home: Path, name: str, run_id: str) -> str:
     apply_patch_to_model(model, patch, item["artifact"])
     render_all(base, model)
     update_references(base, patch)
+    update_notes(base, patch)
     update_inbox(base, patch)
     state["thread_id"] = thread_id
     state["status"] = model.get("status", state.get("status", "open"))

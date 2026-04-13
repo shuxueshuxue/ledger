@@ -48,9 +48,12 @@ Default storage is `~/.ledger`.
     state.json
     ledger.json
     ledger.md
+    references.md
+    notes/
     checkpoints/
     stash/
     runs/
+    logs/
 ```
 
 The ledger home is a git repo. A write operation refuses to start if the ledger
@@ -69,6 +72,21 @@ ledger_agent/agent_instructions/AGENTS.md
 `AGENTS.md`, injecting the managed workspace's local `AGENTS.md` path. The
 global Codex `AGENTS.md` is not copied or symlinked; it is already active in
 the runtime.
+
+## Ledger Layers
+
+`stash/` is append-only evidence. Every typed input is captured there before the
+ledger agent judges it.
+
+`notes/` is the flexible knowledge base. Runtime know-how, design notes,
+triage, and operating facts belong there. `notes/triage.md` replaces the old
+top-level `inbox.md` concept for unresolved items.
+
+`checkpoints/` is the strict state-machine layer. Checkpoint status, quality,
+history, acceptance, and evidence are structured and must be updated through
+the ledger agent protocol.
+
+`references.md` is a source index for repos, paths, URLs, commits, and PRs.
 
 ## Commands
 

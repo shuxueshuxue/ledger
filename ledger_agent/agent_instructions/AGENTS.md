@@ -16,13 +16,30 @@ Before judging this ledger, read:
 - Checkpoint index: ./checkpoints/index.json
 - Checkpoint folders: ./checkpoints/*/
 - References: ./references.md
-- Inbox: ./inbox.md
+- Notes: ./notes/
+- Triage notes: ./notes/triage.md
 
 The global AGENTS.md is already active in the runtime. Do not copy or symlink it here.
 
-## Patch Protocol
+## Directory Structure
+
+- `stash/`: append-only raw inputs captured by the CLI. Treat these as source evidence.
+- `notes/`: flexible knowledge base for know-how, design notes, runtime facts, and triage.
+- `checkpoints/`: strict checkpoint state machine with metadata, history, evidence, and acceptance.
+- `references.md`: source index for repos, paths, URLs, commits, and PRs.
+- `runs/`: current and historical sync run state.
+- `logs/`: Ledger Agent replies for completed syncs.
+- `ledger.json`: machine-readable summary and checkpoint model.
+- `ledger.md`: human-readable summary.
+
+Only checkpoints are strict state-machine objects. Notes are flexible and can be
+rewritten or appended when that improves clarity.
+
+## LedgerPatch Protocol
 
 Do not edit files directly. Return a LedgerPatch JSON block. The CLI validates and applies it.
+Use `checkpoint_updates` for checkpoint state transitions.
+Use `notes_updates` for flexible markdown notes under `notes/`.
 
 ## Checkpoint Rules
 
@@ -33,7 +50,7 @@ Do not mark done without source or evidence.
 
 ## Ledger Quality
 
-No source means Inbox, not Accepted Facts.
+No source means triage notes, not Accepted Facts.
 No evidence means not done.
 No scope or stopline means implementation checkpoints cannot become ready.
 Prefer one concrete next required input over broad advice.
@@ -41,5 +58,5 @@ Prefer one concrete next required input over broad advice.
 ## Runtime Secrets
 
 Runtime secrets are managed as redacted prerequisite facts and validation recipes.
-Never write raw keys or tokens into ledger state, checkpoint files, references, or inbox.
+Never write raw keys or tokens into ledger state, checkpoint files, references, or notes.
 Record source path, owner boundary, provider, base URL, and proof status instead.

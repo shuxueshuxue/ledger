@@ -1,4 +1,5 @@
 import json
+import shutil
 import subprocess
 import sys
 import tempfile
@@ -48,6 +49,8 @@ class LedgerCliTests(unittest.TestCase):
             self.assertTrue((ledger_dir / "ledger.json").exists())
             self.assertTrue((ledger_dir / "ledger.md").exists())
             self.assertTrue((ledger_dir / "checkpoints" / "task-framing" / "metadata.json").exists())
+            self.assertTrue((ledger_dir / "notes" / "triage.md").exists())
+            self.assertFalse((ledger_dir / "inbox.md").exists())
 
             agents = (ledger_dir / "AGENTS.md").read_text()
             self.assertIn(str(repo / "AGENTS.md"), agents)
@@ -73,6 +76,10 @@ class LedgerCliTests(unittest.TestCase):
             agents = (home / "ledgers" / "pr501" / "AGENTS.md").read_text()
             self.assertIn("Source Template: ledger_agent/agent_instructions/AGENTS.md", agents)
             self.assertIn(f"Managed workspace local AGENTS: {(repo / 'AGENTS.md').resolve()}", agents)
+            self.assertIn("## Directory Structure", agents)
+            self.assertIn("notes/", agents)
+            self.assertIn("checkpoints/", agents)
+            self.assertNotIn("Inbox: ./inbox.md", agents)
             self.assertNotIn("{{", agents)
 
     def test_direct_script_init_renders_agent_instructions(self):
@@ -365,6 +372,121 @@ class LedgerCliTests(unittest.TestCase):
 
         with self.assertRaisesRegex(ledger.LedgerError, "unknown ledger_updates field"):
             ledger.validate_patch(patch, model)
+
+    def test_notes_updates_write_markdown_under_notes(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            ledger_dir = home / "ledgers" / "pr501"
+            item = ledger.capture_input(ledger_dir, "message", "Remember runtime know-how.", repo)
+            run_id = "run-test"
+            ledger.create_run_record(ledger_dir, run_id, item)
+            patch = {
+                "decision": "accepted",
+                "summary": "noted",
+                "ledger_updates": {},
+                "checkpoint_updates": [],
+                "references_add": [],
+                "notes_updates": [
+                    {
+                        "path": "runtime/restart.md",
+                        "mode": "append",
+                        "content": "Restart backend with platform API key injected.",
+                    }
+                ],
+            }
+
+            with mock.patch("ledger_agent.cli.run_ledger_agent", return_value=("thread-1", patch, "synced")):
+                ledger.run_worker(home, "pr501", run_id)
+
+            note = (ledger_dir / "notes" / "runtime" / "restart.md").read_text()
+            self.assertIn("Restart backend with platform API key injected.", note)
+
+    def test_notes_updates_reject_path_traversal_before_writes(self):
+        from ledger_agent import cli as ledger
+
+        model = {"checkpoints": []}
+        patch = {
+            "decision": "accepted",
+            "ledger_updates": {},
+            "checkpoint_updates": [],
+            "notes_updates": [{"path": "../outside.md", "mode": "append", "content": "bad"}],
+        }
+
+        with self.assertRaisesRegex(ledger.LedgerError, "Invalid notes path"):
+            ledger.validate_patch(patch, model)
+
+    def test_inbox_add_is_written_to_notes_triage(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            ledger_dir = home / "ledgers" / "pr501"
+            item = ledger.capture_input(ledger_dir, "message", "Ambiguous input.", repo)
+            run_id = "run-test"
+            ledger.create_run_record(ledger_dir, run_id, item)
+            patch = {
+                "decision": "parked",
+                "summary": "needs triage",
+                "ledger_updates": {},
+                "checkpoint_updates": [],
+                "references_add": [],
+                "inbox_add": [{"text": "Needs human ruling."}],
+            }
+
+            with mock.patch("ledger_agent.cli.run_ledger_agent", return_value=("thread-1", patch, "synced")):
+                ledger.run_worker(home, "pr501", run_id)
+
+            triage = (ledger_dir / "notes" / "triage.md").read_text()
+            self.assertIn("Needs human ruling.", triage)
+            self.assertFalse((ledger_dir / "inbox.md").exists())
+
+    def test_typed_input_migrates_legacy_inbox_and_agents_before_sync(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            ledger_dir = home / "ledgers" / "pr501"
+            shutil.rmtree(ledger_dir / "notes")
+            (ledger_dir / "inbox.md").write_text("# Inbox\n\n- legacy triage item\n")
+            (ledger_dir / "AGENTS.md").write_text("old agent rules mentioning Inbox: ./inbox.md\n")
+            git(home, "add", ".")
+            git(home, "commit", "-m", "simulate legacy layout")
+
+            patch = {
+                "decision": "accepted",
+                "summary": "ok",
+                "ledger_updates": {},
+                "checkpoint_updates": [],
+                "references_add": [],
+                "notes_updates": [],
+            }
+
+            def fake_run_ledger_agent(base, _state, _item, _warning):
+                agents = (base / "AGENTS.md").read_text()
+                self.assertIn("## Directory Structure", agents)
+                self.assertNotIn("Inbox: ./inbox.md", agents)
+                return "thread-1", patch, "synced"
+
+            with (
+                mock.patch("ledger_agent.cli.run_ledger_agent", side_effect=fake_run_ledger_agent),
+                mock.patch.dict("os.environ", {"LEDGER_INLINE_WORKER": "1"}),
+            ):
+                ledger.main(["--home", str(home), "-m", "trigger migration"], cwd=repo)
+
+            triage = (ledger_dir / "notes" / "triage.md").read_text()
+            self.assertIn("legacy triage item", triage)
+            self.assertFalse((ledger_dir / "inbox.md").exists())
 
     def test_done_checkpoint_clears_missing_and_list_updates_are_recorded(self):
         from ledger_agent import cli as ledger
