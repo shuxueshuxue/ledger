@@ -9,6 +9,7 @@ import re
 import shutil
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -365,6 +366,73 @@ def current_ledger(args: argparse.Namespace, *, cwd: Path) -> tuple[str, Path]:
     return name, base
 
 
+def runs_dir(base: Path) -> Path:
+    return base / "runs"
+
+
+def current_run_path(base: Path) -> Path:
+    return runs_dir(base) / "current.json"
+
+
+def run_record_dir(base: Path, run_id: str) -> Path:
+    return runs_dir(base) / run_id
+
+
+def load_current_run(base: Path) -> dict[str, Any] | None:
+    path = current_run_path(base)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def assert_not_busy(base: Path) -> None:
+    current = load_current_run(base)
+    if current is None:
+        return
+    run_id = current.get("run_id", "")
+    state_path = run_record_dir(base, run_id) / "state.json"
+    state = load_json(state_path, {})
+    raise LedgerError(
+        "Ledger is busy with a running sync.\n"
+        f"Run: {run_id}\n"
+        f"Status: {state.get('status', 'running')}\n"
+        "Wait for it to finish before starting another sync."
+    )
+
+
+def create_run_record(base: Path, run_id: str, item: dict[str, Any]) -> None:
+    directory = run_record_dir(base, run_id)
+    directory.mkdir(parents=True, exist_ok=True)
+    state = {
+        "run_id": run_id,
+        "status": "running",
+        "pid": None,
+        "input_type": item["type"],
+        "artifact": item["artifact"],
+        "started_at": now_iso(),
+        "finished_at": None,
+    }
+    write_json(directory / "state.json", state)
+    write_json(directory / "input.json", item)
+    write_json(current_run_path(base), {"run_id": run_id})
+
+
+def update_run_state(base: Path, run_id: str, **updates: Any) -> None:
+    path = run_record_dir(base, run_id) / "state.json"
+    state = load_json(path, {})
+    state.update(updates)
+    write_json(path, state)
+
+
+def clear_current_run(base: Path, run_id: str) -> None:
+    path = current_run_path(base)
+    if not path.exists():
+        return
+    current = json.loads(path.read_text())
+    if current.get("run_id") == run_id:
+        path.unlink()
+
+
 def artifact_id(input_type: str, raw: str) -> str:
     stamp = datetime.now(timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     return f"{stamp}-{input_type}-{safe_slug(raw)[:48]}"
@@ -688,14 +756,12 @@ def update_inbox(base: Path, patch: dict[str, Any]) -> None:
             handle.write(f"- {json.dumps(item, sort_keys=True)}\n")
 
 
-def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, input_type: str, raw: str) -> str:
-    home_git_init(args.home)
-    ensure_clean_home(args.home)
-    name, base = current_ledger(args, cwd=cwd)
+def process_run(home: Path, name: str, run_id: str) -> str:
+    base = ledger_dir(home, name)
     state = load_json(base / "state.json", {})
+    run_state = load_json(run_record_dir(base, run_id) / "state.json", {})
+    item = load_json(run_record_dir(base, run_id) / "input.json", {})
     warning = stale_warning(state)
-    workspace_root = Path(state["workspace_root"])
-    item = capture_input(base, input_type, raw, workspace_root)
     thread_id, patch, answer = run_ledger_agent(base, state, item, warning)
     model = load_json(base / "ledger.json", {})
     validate_patch(patch, model)
@@ -709,13 +775,90 @@ def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, input_type: str, raw
     state["last_input_at"] = now_iso()
     state["last_sync_at"] = state["last_input_at"]
     state["updated_at"] = state["last_input_at"]
-    maybe_update_synced_head(state, input_type, raw)
+    maybe_update_synced_head(state, item["type"], item["raw"])
     write_json(base / "state.json", state)
-    log_path = base / "logs" / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{input_type}.md"
+    log_path = base / "logs" / f"{datetime.now(timezone.utc).strftime('%Y%m%dT%H%M%SZ')}-{item['type']}.md"
     log_path.write_text(f"# Ledger Sync\n\nArtifact: {item['artifact']}\n\n## Reply\n\n{answer}\n")
-    commit_if_dirty(args.home, f"ledger: sync {name} {input_type}")
+    (run_record_dir(base, run_id) / "reply.md").write_text(answer)
+    update_run_state(
+        base,
+        run_id,
+        status="done",
+        finished_at=now_iso(),
+        summary=patch.get("summary", ""),
+        log=str(log_path.relative_to(base)),
+    )
+    clear_current_run(base, run_id)
+    commit_if_dirty(home, f"ledger: sync {name} {run_state.get('input_type', item['type'])}")
     prefix = f"{warning}\n\n" if warning else ""
     return prefix + answer + "\n"
+
+
+def run_worker(home: Path, name: str, run_id: str) -> None:
+    home_git_init(home)
+    base = ledger_dir(home, name)
+    try:
+        process_run(home, name, run_id)
+    except Exception as exc:
+        update_run_state(base, run_id, status="failed", finished_at=now_iso(), error=str(exc))
+        clear_current_run(base, run_id)
+        commit_if_dirty(home, f"ledger: failed {name} {run_id}")
+        raise
+
+
+def start_worker_process(home: Path, name: str, run_id: str) -> int:
+    cmd = [
+        sys.executable,
+        str(Path(__file__).resolve()),
+        "--home",
+        str(home),
+        "__worker",
+        name,
+        run_id,
+    ]
+    stdout_path = ledger_dir(home, name) / "runs" / run_id / "worker.stdout"
+    stderr_path = ledger_dir(home, name) / "runs" / run_id / "worker.stderr"
+    stdout = stdout_path.open("w")
+    stderr = stderr_path.open("w")
+    process = subprocess.Popen(
+        cmd,
+        cwd=ledger_dir(home, name),
+        stdout=stdout,
+        stderr=stderr,
+        start_new_session=True,
+    )
+    update_run_state(ledger_dir(home, name), run_id, pid=process.pid)
+    return process.pid
+
+
+def wait_for_run(base: Path, run_id: str) -> str:
+    state_path = run_record_dir(base, run_id) / "state.json"
+    while True:
+        state = load_json(state_path, {})
+        if state.get("status") == "done":
+            reply = run_record_dir(base, run_id) / "reply.md"
+            return reply.read_text() + "\n"
+        if state.get("status") == "failed":
+            raise LedgerError(f"Ledger sync failed: {state.get('error', 'unknown error')}")
+        time.sleep(0.5)
+
+
+def cmd_typed_input(args: argparse.Namespace, *, cwd: Path, input_type: str, raw: str) -> str:
+    home_git_init(args.home)
+    name, base = current_ledger(args, cwd=cwd)
+    assert_not_busy(base)
+    ensure_clean_home(args.home)
+    state = load_json(base / "state.json", {})
+    workspace_root = Path(state["workspace_root"])
+    item = capture_input(base, input_type, raw, workspace_root)
+    run_id = artifact_id("run", f"{input_type}-{item['id']}")
+    create_run_record(base, run_id, item)
+    commit_if_dirty(args.home, f"ledger: start {name} {input_type}")
+    if os.environ.get("LEDGER_INLINE_WORKER") == "1":
+        run_worker(args.home, name, run_id)
+    else:
+        start_worker_process(args.home, name, run_id)
+    return wait_for_run(base, run_id)
 
 
 def summarize_checkpoints(model: dict[str, Any]) -> tuple[list[str], str]:
@@ -744,11 +887,13 @@ def cmd_show(args: argparse.Namespace, *, cwd: Path) -> str:
     if args.full:
         return (base / "ledger.md").read_text()
     warning = stale_warning(state)
+    current_run = load_current_run(base)
     checkpoint_lines, _ = summarize_checkpoints(model)
     output = [
         f"Ledger: {name}",
         f"Workspace: {state.get('workspace_root')}",
         f"Git: {warning if warning else 'fresh'}",
+        f"Run: busy {current_run.get('run_id')}" if current_run else "Run: idle",
         f"Status: {model.get('status', 'open')}",
         f"Quality: {model.get('quality', 'draft')}",
         "",
@@ -779,13 +924,14 @@ def cmd_ls(args: argparse.Namespace, *, cwd: Path) -> str:
         active = find_bound_ledger(home, cwd)
     except LedgerError:
         pass
-    rows = ["NAME\tACTIVE\tGIT\tSTATUS\tQUALITY\tCHECKPOINTS\tWORKSPACE"]
+    rows = ["NAME\tACTIVE\tGIT\tRUN\tSTATUS\tQUALITY\tCHECKPOINTS\tWORKSPACE"]
     for path in sorted((home / "ledgers").glob("*")) if (home / "ledgers").exists() else []:
         if not path.is_dir():
             continue
         state = load_json(path / "state.json", {})
         model = load_json(path / "ledger.json", {})
         _, checkpoint_summary = summarize_checkpoints(model)
+        run_state = "busy" if load_current_run(path) else "idle"
         git_state = "fresh"
         try:
             if stale_warning(state):
@@ -794,7 +940,7 @@ def cmd_ls(args: argparse.Namespace, *, cwd: Path) -> str:
             git_state = "broken"
         marker = "*" if path.name == active else ""
         rows.append(
-            f"{path.name}\t{marker}\t{git_state}\t{model.get('status', 'open')}\t{model.get('quality', 'draft')}\t{checkpoint_summary}\t{state.get('workspace_root', '')}"
+            f"{path.name}\t{marker}\t{git_state}\t{run_state}\t{model.get('status', 'open')}\t{model.get('quality', 'draft')}\t{checkpoint_summary}\t{state.get('workspace_root', '')}"
         )
     return "\n".join(rows) + "\n"
 
@@ -805,6 +951,9 @@ def parse_args(argv: list[str]) -> argparse.Namespace:
     subparsers = parser.add_subparsers(dest="command")
     init = subparsers.add_parser("init")
     init.add_argument("name")
+    worker = subparsers.add_parser("__worker")
+    worker.add_argument("name")
+    worker.add_argument("run_id")
     show = subparsers.add_parser("show")
     show.add_argument("name", nargs="?")
     show.add_argument("--full", action="store_true")
@@ -847,6 +996,9 @@ def main(argv: list[str] | None = None, *, cwd: Path | None = None) -> str:
     try:
         if args.command == "init":
             output = cmd_init(args, cwd=target_cwd)
+        elif args.command == "__worker":
+            run_worker(args.home, args.name, args.run_id)
+            output = ""
         elif args.command == "show":
             output = cmd_show(args, cwd=target_cwd)
         elif args.command == "ls":

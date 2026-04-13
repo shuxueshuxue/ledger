@@ -94,7 +94,10 @@ class LedgerCliTests(unittest.TestCase):
                 "inbox_add": [],
             }
 
-            with mock.patch("ledger_agent.cli.run_ledger_agent", return_value=("thread-1", patch, "synced")):
+            with (
+                mock.patch("ledger_agent.cli.run_ledger_agent", return_value=("thread-1", patch, "synced")),
+                mock.patch.dict("os.environ", {"LEDGER_INLINE_WORKER": "1"}),
+            ):
                 ledger.main(["--home", str(home), "-m", "Goal: foundation decision; stopline: no code edits."], cwd=repo)
 
             ledger_dir = home / "ledgers" / "pr501"
@@ -273,6 +276,80 @@ class LedgerCliTests(unittest.TestCase):
         self.assertEqual(updated["accepted_facts"][0]["fact"], "Goal exists")
         self.assertEqual(updated["decisions"][0]["decision"], "Accept framing")
         self.assertEqual(updated["evidence"][0]["evidence"], "Message has goal")
+
+    def test_running_worker_blocks_new_typed_input(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            ledger_dir = home / "ledgers" / "pr501"
+            run_dir = ledger_dir / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(
+                json.dumps(
+                    {
+                        "status": "running",
+                        "pid": 999999,
+                        "started_at": "2026-04-13T00:00:00Z",
+                    }
+                )
+            )
+            (ledger_dir / "runs" / "current.json").write_text(json.dumps({"run_id": "run-1"}))
+
+            with self.assertRaisesRegex(ledger.LedgerError, "busy"):
+                ledger.main(["--home", str(home), "-m", "new input"], cwd=repo)
+
+    def test_worker_success_clears_current_run_and_applies_patch(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            name, base = ledger.current_ledger(ledger.parse_args(["--home", str(home), "show"]), cwd=repo)
+            item = ledger.capture_input(base, "message", "Goal: keep worker alive.", repo)
+            run_id = "run-test"
+            ledger.create_run_record(base, run_id, item)
+            patch = {
+                "decision": "accepted",
+                "summary": "ok",
+                "ledger_updates": {"current": "Worker applied patch."},
+                "checkpoint_updates": [],
+                "references_add": [],
+                "inbox_add": [],
+            }
+
+            with mock.patch("ledger_agent.cli.run_ledger_agent", return_value=("thread-1", patch, "synced")):
+                ledger.run_worker(home, name, run_id)
+
+            self.assertFalse((base / "runs" / "current.json").exists())
+            model = json.loads((base / "ledger.json").read_text())
+            self.assertEqual(model["current"], "Worker applied patch.")
+            state = json.loads((base / "state.json").read_text())
+            self.assertEqual(state["thread_id"], "thread-1")
+
+    def test_show_reports_busy_run(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            base = home / "ledgers" / "pr501"
+            run_dir = base / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(json.dumps({"status": "running", "pid": 123}))
+            (base / "runs" / "current.json").write_text(json.dumps({"run_id": "run-1"}))
+
+            output = ledger.main(["--home", str(home), "show"], cwd=repo)
+
+            self.assertIn("Run: busy", output)
+            self.assertIn("run-1", output)
 
 
 if __name__ == "__main__":
