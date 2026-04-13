@@ -85,6 +85,10 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("Checkpoint Closure Checklist", agents)
             self.assertIn("real LLM API", agents)
             self.assertIn("Do not increase fallback count", agents)
+            self.assertIn("Pre-Checkpoint Debate", agents)
+            self.assertIn("Ledger can be wrong", agents)
+            self.assertIn("Engineering Taste", agents)
+            self.assertIn("anti-pattern", agents)
             self.assertNotIn("Inbox: ./inbox.md", agents)
             self.assertNotIn("{{", agents)
 

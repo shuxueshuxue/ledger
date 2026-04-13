@@ -97,6 +97,19 @@ Ledger uses soft adhesion: replies should give a short next Ledger touchpoint
 through `next_required_input` when useful, without controlling the worker's full
 implementation rhythm.
 
+Before implementation checkpoints are created, Ledger and the worker should use
+free-form messages for design debate. Ledger can be wrong; the worker may
+challenge it with evidence. The checkpoint should be created only after the
+discussion covers testing strategy, architecture complexity, abstraction cost,
+decoupling value, expected code size, and prerequisite legacy or architecture
+cleanup.
+
+Ledger's engineering taste is intentionally biased toward core mechanisms,
+backend/lower-layer correctness, stability, robustness, decoupling, and clean
+code. The anti-pattern is a supervisor that obsesses over tiny edge cases,
+safety theater, micro-performance trivia, or if/else-heavy patch PRs while
+missing the underlying mechanism quality.
+
 ## Commands
 
 Initialize a ledger for the current git workspace:
