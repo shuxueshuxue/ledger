@@ -508,6 +508,29 @@ Required LedgerPatch keys:
 - checkpoint_updates
 - references_add
 - inbox_add
+
+decision must be exactly one of:
+- accepted
+- parked
+- rejected
+- read_only
+
+If you set ledger_updates.status, it must be exactly one of:
+- open
+- in_progress
+- blocked
+- parked
+- done
+- dropped
+
+If you set ledger_updates.quality or checkpoint quality, it must be exactly one of:
+- draft
+- usable
+- strict
+- blocked
+
+checkpoint_updates is only for state transitions.
+If no checkpoint state transition is needed, use an empty checkpoint_updates list.
 """
     if state.get("thread_id"):
         cmd = [
@@ -534,6 +557,12 @@ Required LedgerPatch keys:
             text = event.get("item", {}).get("text", "")
             if text:
                 messages.append(text)
+        if event.get("type") == "item.completed":
+            item = event.get("item", {})
+            if item.get("type") == "agent_message":
+                text = item.get("text", "")
+                if text:
+                    messages.append(text)
     if not thread_id:
         raise LedgerError("Codex did not return a thread_id")
     if not messages:
@@ -544,17 +573,21 @@ Required LedgerPatch keys:
 
 def validate_patch(patch: dict[str, Any], model: dict[str, Any]) -> None:
     if patch.get("decision") not in {"accepted", "parked", "rejected", "read_only"}:
-        raise LedgerError("LedgerPatch decision is invalid")
+        raise LedgerError(f"LedgerPatch decision is invalid: {patch.get('decision')!r}")
     updates = patch.get("ledger_updates", {})
     if "status" in updates and updates["status"] not in LEDGER_STATUSES:
-        raise LedgerError("LedgerPatch status is invalid")
+        raise LedgerError(f"LedgerPatch status is invalid: {updates['status']!r}")
     if "quality" in updates and updates["quality"] not in QUALITIES:
-        raise LedgerError("LedgerPatch quality is invalid")
+        raise LedgerError(f"LedgerPatch quality is invalid: {updates['quality']!r}")
     checkpoints = {item["id"]: item for item in model.get("checkpoints", [])}
     for update in patch.get("checkpoint_updates", []):
         to_state = update.get("to")
+        if to_state is None:
+            continue
         if to_state not in CHECKPOINT_STATES:
             raise LedgerError(f"Invalid checkpoint state: {to_state}")
+        if "quality" in update and update["quality"] not in QUALITIES:
+            raise LedgerError(f"Invalid checkpoint quality: {update['quality']!r}")
         checkpoint = checkpoints.get(update["id"])
         expected_from = update.get("from")
         if checkpoint and expected_from is not None and checkpoint.get("state") != expected_from:
@@ -574,8 +607,14 @@ def apply_patch_to_model(model: dict[str, Any], patch: dict[str, Any], source: s
     for patch_key, model_key in key_map.items():
         if patch_key in updates:
             model[model_key] = updates[patch_key]
+    for list_key in ["accepted_facts", "decisions", "evidence"]:
+        if list_key in updates:
+            model.setdefault(list_key, [])
+            model[list_key].extend(updates[list_key])
     checkpoints = {item["id"]: item for item in model.get("checkpoints", [])}
     for update in patch.get("checkpoint_updates", []):
+        if update.get("to") is None:
+            continue
         checkpoint = checkpoints.get(update["id"])
         if checkpoint is None:
             order = 10 + (len(model["checkpoints"]) * 10)
@@ -595,7 +634,10 @@ def apply_patch_to_model(model: dict[str, Any], patch: dict[str, Any], source: s
         old_state = checkpoint.get("state")
         checkpoint["state"] = update["to"]
         checkpoint["quality"] = update.get("quality", checkpoint.get("quality", "draft"))
-        checkpoint["missing"] = update.get("missing", checkpoint.get("missing", []))
+        if "missing" in update:
+            checkpoint["missing"] = update["missing"]
+        elif update["to"] == "done":
+            checkpoint["missing"] = []
         checkpoint["title"] = update.get("title", checkpoint.get("title", update["id"]))
         checkpoint.setdefault("history", []).append(
             {

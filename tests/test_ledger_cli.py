@@ -167,6 +167,113 @@ class LedgerCliTests(unittest.TestCase):
             self.assertEqual(command[:3], ["codex", "exec", "--json"])
             self.assertNotIn("codex-run", " ".join(command))
 
+    def test_embedded_codex_runner_reads_current_item_completed_agent_message_events(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            base = Path(tmp)
+            (base / "AGENTS.md").write_text("ledger rules\n")
+            state = {
+                "name": "pr501",
+                "workspace_root": str(base),
+                "thread_id": None,
+            }
+            item = {
+                "type": "message",
+                "raw": "hello",
+                "artifact": "stash/message.md",
+            }
+            stdout = "\n".join(
+                [
+                    json.dumps({"type": "thread.started", "thread_id": "thread-1"}),
+                    json.dumps(
+                        {
+                            "type": "item.completed",
+                            "item": {
+                                "id": "item_0",
+                                "type": "agent_message",
+                                "text": '```json\n{"decision":"read_only","summary":"ok","ledger_updates":{},"checkpoint_updates":[],"references_add":[],"inbox_add":[]}\n```',
+                            },
+                        }
+                    ),
+                ]
+            )
+            completed = subprocess.CompletedProcess(args=["codex"], returncode=0, stdout=stdout, stderr="")
+
+            with mock.patch("ledger_agent.cli.run", return_value=completed):
+                thread_id, patch, _answer = ledger.run_ledger_agent(base, state, item, "")
+
+            self.assertEqual(thread_id, "thread-1")
+            self.assertEqual(patch["decision"], "read_only")
+
+    def test_patch_validation_ignores_checkpoint_notes_without_state_transition(self):
+        from ledger_agent import cli as ledger
+
+        model = {
+            "checkpoints": [
+                {
+                    "id": "task-framing",
+                    "state": "draft",
+                }
+            ]
+        }
+        patch = {
+            "decision": "accepted",
+            "ledger_updates": {},
+            "checkpoint_updates": [
+                {
+                    "id": "task-framing",
+                    "note": "No transition requested.",
+                }
+            ],
+        }
+
+        ledger.validate_patch(patch, model)
+
+    def test_done_checkpoint_clears_missing_and_list_updates_are_recorded(self):
+        from ledger_agent import cli as ledger
+
+        model = {
+            "checkpoints": [
+                {
+                    "id": "task-framing",
+                    "title": "Task Framing",
+                    "state": "draft",
+                    "quality": "draft",
+                    "missing": ["Goal"],
+                    "history": [],
+                }
+            ],
+            "accepted_facts": [],
+            "decisions": [],
+            "evidence": [],
+        }
+        patch = {
+            "decision": "accepted",
+            "ledger_updates": {
+                "accepted_facts": [{"fact": "Goal exists", "source": "stash/message.md"}],
+                "decisions": [{"decision": "Accept framing", "source": "stash/message.md"}],
+                "evidence": [{"evidence": "Message has goal", "source": "stash/message.md"}],
+            },
+            "checkpoint_updates": [
+                {
+                    "id": "task-framing",
+                    "from": "draft",
+                    "to": "done",
+                    "quality": "usable",
+                    "reason": "Goal supplied.",
+                    "source": "stash/message.md",
+                }
+            ],
+        }
+
+        updated = ledger.apply_patch_to_model(model, patch, "stash/message.md")
+
+        self.assertEqual(updated["checkpoints"][0]["missing"], [])
+        self.assertEqual(updated["accepted_facts"][0]["fact"], "Goal exists")
+        self.assertEqual(updated["decisions"][0]["decision"], "Accept framing")
+        self.assertEqual(updated["evidence"][0]["evidence"], "Message has goal")
+
 
 if __name__ == "__main__":
     unittest.main()
