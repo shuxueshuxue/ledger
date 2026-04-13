@@ -118,6 +118,17 @@ Initialize a ledger for the current git workspace:
 ledger init <name>
 ```
 
+After init, ask the ledger to explain itself:
+
+```bash
+ledger -m "gang help"
+```
+
+This is normal free-form input, not a separate command grammar. Ledger should
+answer by explaining what it manages, where notes/references/checkpoints live,
+how to use typed inputs, and when the worker should return for design debate or
+closure review.
+
 Sync one or more typed inputs:
 
 ```bash
@@ -136,6 +147,13 @@ produce one ledger-agent sync:
 ```bash
 ledger -m "runtime fact" -f path/to/checkpoint.md -c HEAD
 ```
+
+Use Ledger as a discussion partner before implementation checkpoints, not only
+as an after-the-fact reporting sink. If a task needs design debate, test
+strategy, architecture boundary, or checkpoint scope, send that discussion to
+Ledger first. One-way completion reports are still accepted as free-form input,
+but the Ledger Agent should correct the interaction pattern when the missing
+pre-work matters.
 
 Read status without starting the agent:
 

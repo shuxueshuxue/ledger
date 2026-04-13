@@ -79,6 +79,10 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("Source Template: ledger_agent/agent_instructions/AGENTS.md", agents)
             self.assertIn(f"Managed workspace local AGENTS: {(repo / 'AGENTS.md').resolve()}", agents)
             self.assertIn("## Directory Structure", agents)
+            self.assertIn("## Self Explanation", agents)
+            self.assertIn("gang help", agents)
+            self.assertIn("ask Ledger directly", agents)
+            self.assertIn("one-way reporting", agents)
             self.assertIn("notes/", agents)
             self.assertIn("checkpoints/", agents)
             self.assertIn("Ledger Agent is a judge, not a worker", agents)
@@ -91,6 +95,21 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("anti-pattern", agents)
             self.assertNotIn("Inbox: ./inbox.md", agents)
             self.assertNotIn("{{", agents)
+
+    def test_init_output_teaches_first_use_self_explanation(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+
+            output = ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+
+            self.assertIn("Initialized ledger: pr501", output)
+            self.assertIn('ledger -m "gang help"', output)
+            self.assertIn("ask this ledger directly", output)
+            self.assertIn("design debate", output)
 
     def test_direct_script_init_renders_agent_instructions(self):
         from ledger_agent import cli as ledger

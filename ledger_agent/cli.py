@@ -349,7 +349,18 @@ def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
     workspaces[str(root)] = name
     write_json(workspaces_path(home), workspaces)
     commit_if_dirty(home, f"ledger: init {name}")
-    return f"Initialized ledger: {name}\n"
+    return "\n".join(
+        [
+            f"Initialized ledger: {name}",
+            "",
+            "First use:",
+            '  ledger -m "gang help"',
+            "",
+            "ask this ledger directly for context, checkpoint debate, runtime facts, and closure review.",
+            "Use design debate before implementation checkpoints when scope, evidence, or architecture is unclear.",
+            "",
+        ]
+    )
 
 
 def current_ledger(args: argparse.Namespace, *, cwd: Path) -> tuple[str, Path]:
