@@ -130,6 +130,14 @@ the primary workspace. Typed inputs from the attached worktree are captured
 against the invoking worktree so commit/file references are not resolved through
 the wrong checkout.
 
+Concurrency is scoped by ledger identity:
+
+- One ledger may have multiple attached folders or git worktrees.
+- One ledger can run only one Ledger Agent sync at a time; all attached folders
+  share the same busy lock.
+- Different ledgers are isolated project contexts. Each ledger has its own
+  worker state, so separate ledgers may run their Ledger Agents in parallel.
+
 After init, ask the ledger to explain itself:
 
 ```bash
