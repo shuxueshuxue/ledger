@@ -1,0 +1,20 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ledger-agent"
+version = "0.1.0"
+description = "Strict long-horizon task ledger for agentic engineering work."
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = []
+
+[project.scripts]
+ledger = "ledger_agent.cli:main"
+
+[tool.setuptools]
+packages = ["ledger_agent"]
+
+[tool.setuptools.package-dir]
+"" = "."
