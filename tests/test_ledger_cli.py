@@ -318,6 +318,33 @@ class LedgerCliTests(unittest.TestCase):
         with self.assertRaisesRegex(ledger.LedgerError, "next_required_input must be a list"):
             ledger.validate_patch(patch, model)
 
+    def test_patch_validation_rejects_unknown_patch_fields(self):
+        from ledger_agent import cli as ledger
+
+        model = {"checkpoints": []}
+        patch = {
+            "decision": "accepted",
+            "ledger_updates": {},
+            "checkpoint_updates": [],
+            "accepted_facts_add": [{"fact": "Silently ignored today."}],
+        }
+
+        with self.assertRaisesRegex(ledger.LedgerError, "unknown field"):
+            ledger.validate_patch(patch, model)
+
+    def test_patch_validation_rejects_unknown_ledger_update_fields(self):
+        from ledger_agent import cli as ledger
+
+        model = {"checkpoints": []}
+        patch = {
+            "decision": "accepted",
+            "ledger_updates": {"synced_head": "HEAD"},
+            "checkpoint_updates": [],
+        }
+
+        with self.assertRaisesRegex(ledger.LedgerError, "unknown ledger_updates field"):
+            ledger.validate_patch(patch, model)
+
     def test_done_checkpoint_clears_missing_and_list_updates_are_recorded(self):
         from ledger_agent import cli as ledger
 

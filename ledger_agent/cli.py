@@ -667,6 +667,19 @@ Required LedgerPatch keys:
 - references_add
 - inbox_add
 
+Allowed ledger_updates keys:
+- goal
+- current
+- status
+- quality
+- next_required_input
+- open_questions
+- accepted_facts
+- decisions
+- evidence
+
+Do not invent *_add fields. The CLI rejects unknown fields.
+
 decision must be exactly one of:
 - accepted
 - parked
@@ -730,12 +743,30 @@ If no checkpoint state transition is needed, use an empty checkpoint_updates lis
 
 
 def validate_patch(patch: dict[str, Any], model: dict[str, Any]) -> None:
+    allowed_patch_keys = {"decision", "summary", "ledger_updates", "checkpoint_updates", "references_add", "inbox_add"}
+    for key in patch:
+        if key not in allowed_patch_keys:
+            raise LedgerError(f"LedgerPatch unknown field: {key}")
     if patch.get("decision") not in {"accepted", "parked", "rejected", "read_only"}:
         raise LedgerError(f"LedgerPatch decision is invalid: {patch.get('decision')!r}")
     for key in ["checkpoint_updates", "references_add", "inbox_add"]:
         if key in patch and not isinstance(patch[key], list):
             raise LedgerError(f"LedgerPatch {key} must be a list")
     updates = patch.get("ledger_updates", {})
+    allowed_update_keys = {
+        "goal",
+        "current",
+        "status",
+        "quality",
+        "next_required_input",
+        "open_questions",
+        "accepted_facts",
+        "decisions",
+        "evidence",
+    }
+    for key in updates:
+        if key not in allowed_update_keys:
+            raise LedgerError(f"LedgerPatch unknown ledger_updates field: {key}")
     for key in ["next_required_input", "open_questions", "accepted_facts", "decisions", "evidence"]:
         if key in updates and not isinstance(updates[key], list):
             raise LedgerError(f"LedgerPatch ledger_updates.{key} must be a list")
