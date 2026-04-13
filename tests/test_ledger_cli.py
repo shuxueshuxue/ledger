@@ -460,6 +460,23 @@ class LedgerCliTests(unittest.TestCase):
 
             self.assertEqual(output, "finished after interruption\n\n")
 
+    def test_wait_returns_last_failed_run_error_when_current_already_cleared(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            base = home / "ledgers" / "pr501"
+            run_dir = base / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(json.dumps({"status": "failed", "error": "agent rejected patch"}))
+            (base / "runs" / "last.json").write_text(json.dumps({"run_id": "run-1"}))
+
+            with self.assertRaisesRegex(ledger.LedgerError, "agent rejected patch"):
+                ledger.main(["--home", str(home), "wait"], cwd=repo)
+
     def test_wait_closes_dead_running_worker_as_failed(self):
         from ledger_agent import cli as ledger
 
