@@ -372,6 +372,25 @@ class LedgerCliTests(unittest.TestCase):
             self.assertFalse((base / "runs" / "current.json").exists())
             self.assertEqual(git(home, "status", "--porcelain"), "")
 
+    def test_wait_returns_last_finished_run_when_current_already_cleared(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            base = home / "ledgers" / "pr501"
+            run_dir = base / "runs" / "run-1"
+            run_dir.mkdir(parents=True)
+            (run_dir / "state.json").write_text(json.dumps({"status": "done"}))
+            (run_dir / "reply.md").write_text("finished after interruption\n")
+            (base / "runs" / "last.json").write_text(json.dumps({"run_id": "run-1"}))
+
+            output = ledger.main(["--home", str(home), "wait"], cwd=repo)
+
+            self.assertEqual(output, "finished after interruption\n\n")
+
     def test_interrupted_wait_tells_user_how_to_resume(self):
         from ledger_agent import cli as ledger
 

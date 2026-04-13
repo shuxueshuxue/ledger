@@ -376,12 +376,23 @@ def current_run_path(base: Path) -> Path:
     return runs_dir(base) / "current.json"
 
 
+def last_run_path(base: Path) -> Path:
+    return runs_dir(base) / "last.json"
+
+
 def run_record_dir(base: Path, run_id: str) -> Path:
     return runs_dir(base) / run_id
 
 
 def load_current_run(base: Path) -> dict[str, Any] | None:
     path = current_run_path(base)
+    if not path.exists():
+        return None
+    return json.loads(path.read_text())
+
+
+def load_last_run(base: Path) -> dict[str, Any] | None:
+    path = last_run_path(base)
     if not path.exists():
         return None
     return json.loads(path.read_text())
@@ -435,6 +446,10 @@ def clear_current_run(base: Path, run_id: str) -> None:
         path.unlink()
 
 
+def mark_last_run(base: Path, run_id: str) -> None:
+    write_json(last_run_path(base), {"run_id": run_id})
+
+
 def pid_is_running(pid: Any) -> bool:
     if not pid:
         return False
@@ -449,6 +464,7 @@ def close_terminal_run_if_owner_dead(home: Path, base: Path, run_id: str, state:
     if pid_is_running(state.get("pid")):
         return
     clear_current_run(base, run_id)
+    mark_last_run(base, run_id)
     commit_if_dirty(home, f"ledger: close run {run_id}")
 
 
@@ -829,6 +845,7 @@ def process_run(home: Path, name: str, run_id: str) -> str:
         log=str(log_path.relative_to(base)),
     )
     clear_current_run(base, run_id)
+    mark_last_run(base, run_id)
     commit_if_dirty(home, f"ledger: sync {name} {run_state.get('input_type', item['type'])}")
     prefix = f"{warning}\n\n" if warning else ""
     return prefix + answer + "\n"
@@ -842,6 +859,7 @@ def run_worker(home: Path, name: str, run_id: str) -> None:
     except Exception as exc:
         update_run_state(base, run_id, status="failed", finished_at=now_iso(), error=str(exc))
         clear_current_run(base, run_id)
+        mark_last_run(base, run_id)
         commit_if_dirty(home, f"ledger: failed {name} {run_id}")
         raise
 
@@ -981,10 +999,12 @@ def cmd_wait(args: argparse.Namespace, *, cwd: Path) -> str:
             raise LedgerError(f"Ledger not found: {name}")
     current = load_current_run(base)
     if current is None:
-        raise LedgerError(f"No running ledger sync for: {name}")
+        current = load_last_run(base)
+        if current is None:
+            raise LedgerError(f"No running or finished ledger sync for: {name}")
     run_id = current.get("run_id")
     if not run_id:
-        raise LedgerError(f"Malformed current run record for: {name}")
+        raise LedgerError(f"Malformed run record for: {name}")
     return wait_for_run(base, run_id, home=args.home)
 
 

@@ -80,7 +80,9 @@ ledger wait <name>
 ```
 
 If a foreground wait is interrupted, the worker remains active and the CLI
-prints the exact `ledger show` and `ledger wait` commands to use next.
+prints the exact `ledger show` and `ledger wait` commands to use next. If the
+worker finishes before you run `ledger wait`, `ledger wait` returns the most
+recent finished run instead of losing the reply.
 
 ## Checkpoints
 
