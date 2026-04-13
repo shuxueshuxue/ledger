@@ -369,6 +369,8 @@ class LedgerCliTests(unittest.TestCase):
             output = ledger.main(["--home", str(home), "wait"], cwd=repo)
 
             self.assertEqual(output, "finished\n\n")
+            self.assertFalse((base / "runs" / "current.json").exists())
+            self.assertEqual(git(home, "status", "--porcelain"), "")
 
     def test_interrupted_wait_tells_user_how_to_resume(self):
         from ledger_agent import cli as ledger

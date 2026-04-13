@@ -435,6 +435,23 @@ def clear_current_run(base: Path, run_id: str) -> None:
         path.unlink()
 
 
+def pid_is_running(pid: Any) -> bool:
+    if not pid:
+        return False
+    try:
+        os.kill(int(pid), 0)
+    except (OSError, TypeError, ValueError):
+        return False
+    return True
+
+
+def close_terminal_run_if_owner_dead(home: Path, base: Path, run_id: str, state: dict[str, Any]) -> None:
+    if pid_is_running(state.get("pid")):
+        return
+    clear_current_run(base, run_id)
+    commit_if_dirty(home, f"ledger: close run {run_id}")
+
+
 def ledger_command(home: Path, command: str) -> str:
     parts = ["ledger"]
     if home.resolve() != DEFAULT_HOME.resolve():
@@ -868,8 +885,10 @@ def wait_for_run(base: Path, run_id: str, *, home: Path) -> str:
             state = load_json(state_path, {})
             if state.get("status") == "done":
                 reply = run_record_dir(base, run_id) / "reply.md"
+                close_terminal_run_if_owner_dead(home, base, run_id, state)
                 return reply.read_text() + "\n"
             if state.get("status") == "failed":
+                close_terminal_run_if_owner_dead(home, base, run_id, state)
                 raise LedgerError(f"Ledger sync failed: {state.get('error', 'unknown error')}")
             time.sleep(0.5)
     except KeyboardInterrupt as exc:
