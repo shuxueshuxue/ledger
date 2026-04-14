@@ -38,6 +38,22 @@ class LedgerCliTests(unittest.TestCase):
         git(repo, "worktree", "add", "-b", branch, str(worktree))
         return worktree
 
+    def set_worktree_identity(
+        self,
+        repo: Path,
+        *,
+        owner: str | None = None,
+        role: str | None = None,
+        description: str | None = None,
+    ) -> None:
+        git(repo, "config", "extensions.worktreeConfig", "true")
+        if owner is not None:
+            git(repo, "config", "--worktree", "worktree.owner", owner)
+        if role is not None:
+            git(repo, "config", "--worktree", "worktree.role", role)
+        if description is not None:
+            git(repo, "config", "--worktree", "worktree.description", description)
+
     def test_init_creates_git_backed_ledger_and_required_checkpoint(self):
         from ledger_agent import cli as ledger
 
@@ -76,6 +92,7 @@ class LedgerCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = self.make_repo(root)
+            self.set_worktree_identity(repo, owner="codex-primary", role="dev-runnable-closure", description="shared dev closure")
             home = root / "ledger-home"
 
             ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
@@ -106,9 +123,17 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("ledger wait", agents)
             self.assertIn("Several minutes is normal", agents)
             self.assertIn("Do not start another typed input", agents)
+            self.assertIn("Managed workspace owner: codex-primary", agents)
+            self.assertIn("Managed workspace role: dev-runnable-closure", agents)
+            self.assertIn("Managed workspace description: shared dev closure", agents)
             self.assertIn("anti-pattern", agents)
             self.assertNotIn("Inbox: ./inbox.md", agents)
             self.assertNotIn("{{", agents)
+
+            state = json.loads((home / "ledgers" / "pr501" / "state.json").read_text())
+            self.assertEqual(state["workspace_owner"], "codex-primary")
+            self.assertEqual(state["workspace_role"], "dev-runnable-closure")
+            self.assertEqual(state["workspace_description"], "shared dev closure")
 
     def test_init_output_teaches_first_use_self_explanation(self):
         from ledger_agent import cli as ledger
@@ -177,7 +202,9 @@ class LedgerCliTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
             repo = self.make_repo(root)
+            self.set_worktree_identity(repo, owner="codex-primary", role="primary-lane", description="primary workspace")
             worktree = self.make_worktree(repo, root)
+            self.set_worktree_identity(worktree, owner="codex-brother-1", role="clean-dev-base", description="attached sibling")
             (worktree / "from-attached.txt").write_text("attached worktree fact\n")
             git(worktree, "add", "from-attached.txt")
             git(worktree, "commit", "-m", "attached worktree commit")
@@ -213,12 +240,31 @@ class LedgerCliTests(unittest.TestCase):
             self.assertEqual(item["type"], "commit")
             self.assertEqual(item["workspace_root"], str(worktree.resolve()))
             self.assertEqual(item["workspace_head"], git(worktree, "rev-parse", "HEAD"))
+            self.assertEqual(item["workspace_owner"], "codex-brother-1")
+            self.assertEqual(item["workspace_role"], "clean-dev-base")
+            self.assertEqual(item["workspace_description"], "attached sibling")
             artifact = (ledger_dir / item["artifact"]).read_text()
             self.assertIn("attached worktree commit", artifact)
             self.assertIn("from-attached.txt", artifact)
             after_state = json.loads((ledger_dir / "state.json").read_text())
             self.assertEqual(after_state["workspace_root"], str(repo.resolve()))
             self.assertEqual(after_state["synced_head"], before_state["synced_head"])
+
+    def test_show_displays_primary_workspace_identity_when_present(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            self.set_worktree_identity(repo, owner="codex-primary", role="dev-runnable-closure", description="shared dev closure")
+            home = root / "ledger-home"
+
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            output = ledger.main(["--home", str(home), "show"], cwd=repo)
+
+            self.assertIn("Workspace Owner: codex-primary", output)
+            self.assertIn("Workspace Role: dev-runnable-closure", output)
+            self.assertIn("Workspace Description: shared dev closure", output)
 
     def test_direct_script_init_renders_agent_instructions(self):
         from ledger_agent import cli as ledger
@@ -376,12 +422,19 @@ class LedgerCliTests(unittest.TestCase):
             state = {
                 "name": "pr501",
                 "workspace_root": str(base),
+                "workspace_owner": "codex-primary",
+                "workspace_role": "dev-runnable-closure",
+                "workspace_description": "shared dev closure",
                 "thread_id": None,
             }
             item = {
                 "type": "message",
                 "raw": "hello",
                 "artifact": "stash/message.md",
+                "workspace_root": str(base),
+                "workspace_owner": "codex-brother-1",
+                "workspace_role": "clean-dev-base",
+                "workspace_description": "sibling workspace",
             }
             stdout = "\n".join(
                 [
@@ -409,6 +462,10 @@ class LedgerCliTests(unittest.TestCase):
             self.assertNotIn("codex-run", " ".join(command))
             self.assertIn("Adhesion", command[-1])
             self.assertIn("next_required_input", command[-1])
+            self.assertIn("Managed workspace owner: codex-primary", command[-1])
+            self.assertIn("Managed workspace role: dev-runnable-closure", command[-1])
+            self.assertIn("Input workspace owner: codex-brother-1", command[-1])
+            self.assertIn("Input workspace role: clean-dev-base", command[-1])
 
     def test_embedded_codex_runner_reads_current_item_completed_agent_message_events(self):
         from ledger_agent import cli as ledger

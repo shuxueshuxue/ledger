@@ -58,6 +58,19 @@ def git_head(cwd: Path) -> str:
     return git(cwd, "rev-parse", "HEAD")
 
 
+def git_config_worktree(cwd: Path, key: str) -> str | None:
+    value = git(cwd, "config", "--worktree", "--get", key, check=False).strip()
+    return value or None
+
+
+def worktree_identity(cwd: Path) -> dict[str, str | None]:
+    return {
+        "workspace_owner": git_config_worktree(cwd, "worktree.owner"),
+        "workspace_role": git_config_worktree(cwd, "worktree.role"),
+        "workspace_description": git_config_worktree(cwd, "worktree.description"),
+    }
+
+
 def load_json(path: Path, default: Any) -> Any:
     if not path.exists():
         return default
@@ -282,10 +295,18 @@ def render_all(base: Path, model: dict[str, Any]) -> None:
     render_checkpoint_files(base, model)
 
 
-def ledger_agents_md(_workspace_root: Path, local_agents: Path | None) -> str:
+def ledger_agents_md(state: dict[str, Any], local_agents: Path | None) -> str:
     local_agents_line = str(local_agents) if local_agents and local_agents.exists() else "(none)"
+    owner_line = state.get("workspace_owner") or "(none)"
+    role_line = state.get("workspace_role") or "(none)"
+    description_line = state.get("workspace_description") or "(none)"
     template = (Path(__file__).resolve().parent / "agent_instructions" / "AGENTS.md").read_text()
-    return template.replace("{{LOCAL_AGENTS_PATH}}", local_agents_line)
+    return (
+        template.replace("{{LOCAL_AGENTS_PATH}}", local_agents_line)
+        .replace("{{WORKSPACE_OWNER}}", owner_line)
+        .replace("{{WORKSPACE_ROLE}}", role_line)
+        .replace("{{WORKSPACE_DESCRIPTION}}", description_line)
+    )
 
 
 def ensure_ledger_layout(base: Path, state: dict[str, Any]) -> None:
@@ -307,7 +328,7 @@ def ensure_ledger_layout(base: Path, state: dict[str, Any]) -> None:
     workspace_root = Path(state["workspace_root"])
     local_agents_raw = state.get("local_agents_path")
     local_agents = Path(local_agents_raw) if local_agents_raw else workspace_root / "AGENTS.md"
-    (base / "AGENTS.md").write_text(ledger_agents_md(workspace_root, local_agents))
+    (base / "AGENTS.md").write_text(ledger_agents_md(state, local_agents))
 
 
 def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
@@ -324,6 +345,7 @@ def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
     if str(root) in workspaces:
         raise LedgerError(f"Workspace already bound to ledger: {workspaces[str(root)]}")
     created = now_iso()
+    identity = worktree_identity(root)
     base.mkdir(parents=True)
     (base / "stash").mkdir()
     (base / "logs").mkdir()
@@ -336,6 +358,9 @@ def cmd_init(args: argparse.Namespace, *, cwd: Path) -> str:
         "synced_head": git_head(root),
         "status": "open",
         "quality": "draft",
+        "workspace_owner": identity["workspace_owner"],
+        "workspace_role": identity["workspace_role"],
+        "workspace_description": identity["workspace_description"],
         "local_agents_path": str(root / "AGENTS.md") if (root / "AGENTS.md").exists() else None,
         "created_at": created,
         "updated_at": created,
@@ -381,6 +406,22 @@ def cmd_attach(args: argparse.Namespace, *, cwd: Path) -> str:
         raise LedgerError(f"Workspace already bound to ledger: {current}")
     workspaces[str(root)] = name
     write_json(workspaces_path(home), workspaces)
+    state = load_json(base / "state.json", {})
+    attached = state.get("attached_workspaces", [])
+    identity = worktree_identity(root)
+    attached = [item for item in attached if item.get("workspace_root") != str(root)]
+    attached.append(
+        {
+            "workspace_root": str(root),
+            "workspace_owner": identity["workspace_owner"],
+            "workspace_role": identity["workspace_role"],
+            "workspace_description": identity["workspace_description"],
+        }
+    )
+    state["attached_workspaces"] = attached
+    state["updated_at"] = now_iso()
+    ensure_ledger_layout(base, state)
+    write_json(base / "state.json", state)
     commit_if_dirty(home, f"ledger: attach {name}")
     return f"Attached ledger: {name}\nWorkspace: {root}\n"
 
@@ -666,6 +707,7 @@ def capture_input(
             "captured_at": now_iso(),
             "workspace_root": str(workspace_root.resolve()),
             "workspace_head": git_head(workspace_root),
+            **worktree_identity(workspace_root),
             "sync_status": "pending",
         }
     )
@@ -701,6 +743,7 @@ def capture_bundle(base: Path, inputs: list[tuple[str, str]], workspace_root: Pa
         "captured_at": now_iso(),
         "workspace_root": str(workspace_root.resolve()),
         "workspace_head": git_head(workspace_root),
+        **worktree_identity(workspace_root),
         "sync_status": "pending",
     }
     append_manifest(base, bundle)
@@ -731,12 +774,18 @@ Do not edit files directly.
 
 Ledger: {state['name']}
 Managed workspace: {state['workspace_root']}
+Managed workspace owner: {state.get('workspace_owner') or '(none)'}
+Managed workspace role: {state.get('workspace_role') or '(none)'}
+Managed workspace description: {state.get('workspace_description') or '(none)'}
 Stale warning: {stale_warning or 'none'}
 
 Input type: {item['type']}
 Raw input: {item['raw']}
 Artifact: {item['artifact']}
 Input workspace: {item.get('workspace_root', state['workspace_root'])}
+Input workspace owner: {item.get('workspace_owner') or '(none)'}
+Input workspace role: {item.get('workspace_role') or '(none)'}
+Input workspace description: {item.get('workspace_description') or '(none)'}
 {bundle_lines}
 
 Required LedgerPatch keys:
@@ -1221,6 +1270,9 @@ def cmd_show(args: argparse.Namespace, *, cwd: Path) -> str:
     output = [
         f"Ledger: {name}",
         f"Workspace: {state.get('workspace_root')}",
+        f"Workspace Owner: {state.get('workspace_owner') or '(none)'}",
+        f"Workspace Role: {state.get('workspace_role') or '(none)'}",
+        f"Workspace Description: {state.get('workspace_description') or '(none)'}",
         f"Git: {warning if warning else 'fresh'}",
         f"Run: busy {current_run.get('run_id')}" if current_run else "Run: idle",
         f"Status: {model.get('status', 'open')}",

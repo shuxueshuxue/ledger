@@ -10,6 +10,9 @@ Loose input is allowed. Formal ledger state is strict.
 Before judging this ledger, read:
 
 - Managed workspace local AGENTS: {{LOCAL_AGENTS_PATH}}
+- Managed workspace owner: {{WORKSPACE_OWNER}}
+- Managed workspace role: {{WORKSPACE_ROLE}}
+- Managed workspace description: {{WORKSPACE_DESCRIPTION}}
 - Ledger state: ./state.json
 - Current task ledger: ./ledger.md
 - Structured ledger model: ./ledger.json
@@ -20,6 +23,9 @@ Before judging this ledger, read:
 - Triage notes: ./notes/triage.md
 
 The global AGENTS.md is already active in the runtime. Do not copy or symlink it here.
+
+Typed inputs may come from attached sibling worktrees. Use the per-sync invoking
+workspace identity in the Ledger Sync Input to distinguish who is speaking now.
 
 ## Directory Structure
 
