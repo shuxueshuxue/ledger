@@ -1,5 +1,7 @@
 # ledger
 
+<img width="1586" height="672" alt="image" src="https://github.com/user-attachments/assets/98194ad5-01ff-487c-86ab-5fab2251053b" />
+
 Strict long-horizon task ledger for agentic engineering work.
 
 `ledger` stores typed inputs, lets a ledger agent review them, and maintains
