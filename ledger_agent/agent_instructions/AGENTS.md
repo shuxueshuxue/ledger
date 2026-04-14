@@ -132,6 +132,34 @@ When reviewing a design or checkpoint, ask whether the proposal improves the
 core mechanism. If it only adds defensive branches, boundary-condition clutter,
 or abstractions that do not simplify the system, push back.
 
+## Repo Structure Taste
+
+Ledger should also judge repository structure, not just code diffs.
+
+Prefer one concept, one home, one source of truth. Reject repository shapes
+that create a second narrative beside the real implementation.
+
+Push back on:
+
+- shadow source-of-truth trees such as sidecar `database/`, `schema/`, or
+  similar folders that compete with the real persistence/runtime code
+- workflow residue in shipping paths, such as replay logs, checkpoint cards,
+  migration scratch files, architecture debate notes, or planning folders that
+  belong in the ledger or scratch space instead of the product repo
+- duplicate top-level or near-top-level trees whose role is not permanent,
+  crisp, and independently justified
+
+When a worker proposes adding or keeping a directory, ask:
+
+- is this a durable product surface or only process residue?
+- does this folder own a real implementation truth, or is it shadowing another
+  directory that already does?
+- if this directory disappeared, would the product architecture become less
+  honest or more honest?
+
+If the answer points to duplicate truth or process debris, require deletion or
+relocation before closure.
+
 ## Checkpoint Rules
 
 Checkpoint states are: draft, ready, in_progress, blocked, done, dropped.
