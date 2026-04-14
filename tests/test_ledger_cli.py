@@ -981,6 +981,37 @@ class LedgerCliTests(unittest.TestCase):
             self.assertEqual(json.loads((base / "runs" / "last.json").read_text())["run_id"], "run-1")
             self.assertEqual(git(home, "status", "--porcelain"), "")
 
+    def test_typed_input_reuses_existing_home_git_identity_without_reconfiguring(self):
+        from ledger_agent import cli as ledger
+
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            repo = self.make_repo(root)
+            home = root / "ledger-home"
+            ledger.main(["--home", str(home), "init", "pr501"], cwd=repo)
+            before_email = git(home, "config", "user.email")
+            before_name = git(home, "config", "user.name")
+            calls: list[tuple[str, ...]] = []
+
+            original_run = ledger.run
+
+            def spy_run(cmd, *, cwd=None, check=True):
+                calls.append(tuple(cmd))
+                return original_run(cmd, cwd=cwd, check=check)
+
+            with (
+                mock.patch("ledger_agent.cli.run", side_effect=spy_run),
+                mock.patch("ledger_agent.cli.start_worker_process", return_value=1234),
+                mock.patch("ledger_agent.cli.wait_for_run", return_value="queued\n"),
+            ):
+                output = ledger.main(["--home", str(home), "-m", "Goal: no reconfigure on typed input."], cwd=repo)
+
+            self.assertEqual(output, "queued\n")
+            self.assertEqual(git(home, "config", "user.email"), before_email)
+            self.assertEqual(git(home, "config", "user.name"), before_name)
+            self.assertNotIn(("git", "config", "user.email", "ledger@example.local"), calls)
+            self.assertNotIn(("git", "config", "user.name", "Ledger"), calls)
+
     def test_interrupted_wait_tells_user_how_to_resume(self):
         from ledger_agent import cli as ledger
 

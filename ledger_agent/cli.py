@@ -73,8 +73,8 @@ def home_git_init(home: Path) -> None:
     home.mkdir(parents=True, exist_ok=True)
     if not (home / ".git").exists():
         git(home, "init")
-    git(home, "config", "user.email", "ledger@example.local")
-    git(home, "config", "user.name", "Ledger")
+        git(home, "config", "user.email", "ledger@example.local")
+        git(home, "config", "user.name", "Ledger")
 
 
 def ensure_clean_home(home: Path) -> None:
