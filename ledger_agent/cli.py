@@ -817,6 +817,8 @@ Adhesion:
 - Always set ledger_updates.next_required_input to one or more concrete next Ledger touchpoints when useful.
 - Prefer soft steering over control. Suggest when the worker should come back to Ledger, but do not prescribe its full implementation rhythm.
 - Good touchpoints include: checkpoint state changed, new evidence exists, architecture/legacy blocker found, runtime secret fact changed, or the next slice needs closure review.
+- Use invoking workspace owner/role as soft supervision hints when useful for read-only guidance, self-explanation, or next touchpoints.
+- Do not turn role labels into hard routing, mandatory policy gates, or automatic acceptance/rejection.
 
 decision must be exactly one of:
 - accepted

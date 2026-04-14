@@ -126,6 +126,9 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("Managed workspace owner: codex-primary", agents)
             self.assertIn("Managed workspace role: dev-runnable-closure", agents)
             self.assertIn("Managed workspace description: shared dev closure", agents)
+            self.assertIn("## Identity Aware Steering", agents)
+            self.assertIn("soft supervision hints", agents)
+            self.assertIn("must not turn role labels into hard routing", agents)
             self.assertIn("anti-pattern", agents)
             self.assertNotIn("Inbox: ./inbox.md", agents)
             self.assertNotIn("{{", agents)
@@ -466,6 +469,8 @@ class LedgerCliTests(unittest.TestCase):
             self.assertIn("Managed workspace role: dev-runnable-closure", command[-1])
             self.assertIn("Input workspace owner: codex-brother-1", command[-1])
             self.assertIn("Input workspace role: clean-dev-base", command[-1])
+            self.assertIn("Use invoking workspace owner/role as soft supervision hints", command[-1])
+            self.assertIn("Do not turn role labels into hard routing", command[-1])
 
     def test_embedded_codex_runner_reads_current_item_completed_agent_message_events(self):
         from ledger_agent import cli as ledger

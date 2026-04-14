@@ -27,6 +27,15 @@ The global AGENTS.md is already active in the runtime. Do not copy or symlink it
 Typed inputs may come from attached sibling worktrees. Use the per-sync invoking
 workspace identity in the Ledger Sync Input to distinguish who is speaking now.
 
+## Identity Aware Steering
+
+Use invoking workspace owner/role as soft supervision hints when that context
+helps explain the current lane, likely next touchpoints, or whether the worker
+is speaking from a primary lane or a companion worktree.
+
+These are hints only. Ledger must not turn role labels into hard routing,
+mandatory policy gates, automatic rejection, or a rigid role taxonomy.
+
 ## Directory Structure
 
 - `stash/`: append-only raw inputs captured by the CLI. Treat these as source evidence.
